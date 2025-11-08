@@ -12,7 +12,8 @@ export default function Home() {
         <p className="text-xl text-[#003366] font-semibold">🔧 サイト改装中</p>
         <p className="text-[#004d40] mt-2">まもなくオープン予定です。お楽しみに！</p>
       </div>
+      <p className="mt-2 text-sm text-gray-500">Last deployed: {new Date().toLocaleString()}</p>
     </main>
   );
 }
-<p className="mt-2 text-sm text-gray-500">Last deployed: {new Date().toLocaleString()}</p>
+
