@@ -15,4 +15,4 @@ export default function Home() {
     </main>
   );
 }
-{/* test 2025-11-08 */}
+<p className="mt-2 text-sm text-gray-500">Last deployed: {new Date().toLocaleString()}</p>
