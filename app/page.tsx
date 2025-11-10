@@ -171,7 +171,7 @@ export default function Page(){
                 src="https://outfitdeals.vercel.app/outfitdeals_logo2.png"
                 alt="Outfit Deals"
                 className="w-auto block"
-                style={{height:'80px'}}
+                style={{height:'60px'}}
               />
               <span className="sr-only">Outfit Deals</span>
             </div>
