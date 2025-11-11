@@ -153,7 +153,7 @@ export default function Page(){
   // 全体フォント（ヒラギノ系）
   const fontJP = {
     fontFamily: '"Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"'
-  };
+  } as const;
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#fffafa', ...fontJP }}>
@@ -167,12 +167,11 @@ export default function Page(){
         <div className="mx-auto max-w-7xl px-4 text-white">
           <div className="flex h-16 items-center gap-3">
             <div className="flex items-center gap-3">
+              {/* ★ ここだけ変更: 高さ固定から可変へ */}
               <img
                 src="https://outfitdeals.vercel.app/outfitdeals_logo2.png"
                 alt="Outfit Deals"
-                className="w-auto block"
-                style={{height:'60px'}}
-              />
+                className="w-auto block h-8 md:h-10 lg:h-11"/>
               <span className="sr-only">Outfit Deals</span>
             </div>
             <div className="ml-4 hidden md:flex flex-1 items-center gap-2 rounded-md border border-white/20 bg-white/10 px-3 py-2">
@@ -190,7 +189,8 @@ export default function Page(){
 
       {/* グリッド */}
       <main className="mx-auto max-w-7xl px-4 py-6">
-        <h2 className="mb-3 text-lg font-semibold text-slate-900">人気急上昇中</h2>
+        {/* ★ ここだけ変更: tracking-wide を追加 */}
+        <h2 className="mb-3 text-lg font-semibold text-slate-900 tracking-wide">人気急上昇中</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {filtered.map(d => (
             <Card key={d.id} d={d} />
