@@ -159,38 +159,71 @@ export default function Page(){
     <div className="min-h-screen" style={{ backgroundColor: '#fffafa', ...fontJP }}>
       {/* サイト説明帯 */}
       <div className="w-full text-center text-[12px] leading-tight py-1 px-2" style={{ backgroundColor:'#006888', color:'#ffffff' }}>
-        アウトフィットディールは、ファッション好きが“お得”をシェアし合うコミュニティです。セール情報に加えて、レビューやコーデ投稿でユーザー同士がつながれる場所です。
+        アウトフィットディールズは、ファッション好きが“お得”をシェアし合うコミュニティです。セール情報に加えて、レビューやコーデ投稿でユーザー同士がつながれる場所です。
       </div>
 
       {/* ヘッダー */}
-      <header className="sticky top-0 z-40 border-b border-slate-200" style={{ backgroundColor: '#001e43' }}>
-        <div className="mx-auto max-w-7xl px-4 text-white">
-          <div className="flex h-16 items-center gap-3">
-            <div className="flex items-center gap-3">
-              {/* ★ ここだけ変更: 高さ固定から可変へ */}
-              <img
-                src="https://outfitdeals.vercel.app/outfitdeals_logo2.png"
-                alt="Outfit Deals"
-                className="w-auto block h-8 md:h-10 lg:h-11"/>
-              <span className="sr-only">Outfit Deals</span>
-            </div>
-            <div className="ml-4 hidden md:flex flex-1 items-center gap-2 rounded-md border border-white/20 bg-white/10 px-3 py-2">
-              <Search className="h-4 w-4 text-white/70" />
-              <input
-                value={q}
-                onChange={(e)=>setQ(e.target.value)}
-                className="w-full bg-transparent text-sm placeholder:text-white/70 focus:outline-none"
-                placeholder="お得なディールを検索"
-              />
-            </div>
-          </div>
-        </div>
-      </header>
+<header className="sticky top-0 z-40 border-b border-slate-200" style={{ backgroundColor: '#001e43' }}>
+  <div className="mx-auto max-w-7xl px-4 text-white">
+    <div className="flex h-16 items-center gap-3">
+
+      {/* 左：ロゴ */}
+      <div className="flex items-center gap-3">
+        <img
+          src="https://outfitdeals.vercel.app/outfitdeals_logo2.png"
+          alt="Outfit Deals"
+          className="w-auto block h-8 md:h-10 lg:h-11"
+        />
+        <span className="sr-only">Outfit Deals</span>
+      </div>
+
+      {/* 中央：検索バー */}
+      <div className="ml-4 hidden md:flex flex-1 items-center gap-2 rounded-md border border-white/20 bg-white/10 px-3 py-2">
+        <Search className="h-4 w-4 text-white/70" />
+        <input
+          value={q}
+          onChange={(e)=>setQ(e.target.value)}
+          className="w-full bg-transparent text-sm placeholder:text-white/70 focus:outline-none"
+          placeholder="お得なディールを検索"
+        />
+      </div>
+
+      {/* 右：アイコン（投稿・マイページ） */}
+      <div className="flex items-center gap-3 ml-3">
+        {/* 投稿する */}
+        <button
+          className="hidden sm:inline-flex items-center gap-1 text-white/90 hover:text-white"
+          title="ディールを投稿"
+          type="button"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          <span className="text-sm font-medium">投稿</span>
+        </button>
+
+        {/* マイページ */}
+        <button
+          className="hidden sm:inline-flex items-center gap-1 text-white/90 hover:text-white"
+          title="マイページ"
+          type="button"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 15c2.485 0 4.797.635 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          <span className="text-sm font-medium">マイページ</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+</header>
+
 
       {/* グリッド */}
       <main className="mx-auto max-w-7xl px-4 py-6">
         {/* ★ ここだけ変更: tracking-wide を追加 */}
-        <h2 className="mb-3 text-lg font-semibold text-slate-900 tracking-wide">人気急上昇中</h2>
+        <h2 className="mb-3 text-xl font-semibold text-[#001e43] tracking-wide">あなたにおすすめ</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {filtered.map(d => (
             <Card key={d.id} d={d} />
