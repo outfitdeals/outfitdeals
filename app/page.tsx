@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Search, MessageSquare, ThumbsUp, Bookmark } from "lucide-react";
 
 // ---- ダミーデータ（楽天市場 / Yahoo!ショッピング）
@@ -87,6 +87,10 @@ const DEALS = [
   }
 ];
 
+// 右カラム用：人気順・コメント順
+const POPULAR_DEALS = [...DEALS].sort((a, b) => b.likes - a.likes);
+const TRENDING_DEALS = [...DEALS].sort((a, b) => b.comments - a.comments);
+
 function yen(n: number) {
   return `${Number(n).toLocaleString("ja-JP")}円`;
 }
@@ -103,7 +107,7 @@ function MarketTag({ market }: { market: string }) {
         color: base.text,
         backgroundColor: base.bg
       }}
-      className="inline-flex items-center px-1.5 py-0.5 text-[11px] font-medium border rounded-none"
+      className="inline-flex items-center px-1 py-[1px] text-[10px] font-medium border rounded-none"
     >
       {market}
     </span>
@@ -190,24 +194,28 @@ export default function Page() {
   const [cardSize, setCardSize] = useState<CardSize>("normal");
   const [cardsPerPage, setCardsPerPage] = useState<number>(5);
   const [currentPage, setCurrentPage] = useState<number>(0);
-  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const filtered = useMemo(() => {
-    return DEALS.filter((d) =>
-      q
-        ? (d.title + " " + d.shopName)
-            .toLowerCase()
-            .includes(q.toLowerCase())
-        : true
-    );
-  }, [q]);
+  const filtered = useMemo(
+    () =>
+      DEALS.filter((d) =>
+        q
+          ? (d.title + " " + d.shopName)
+              .toLowerCase()
+              .includes(q.toLowerCase())
+          : true
+      ),
+    [q]
+  );
 
   // ---- レイアウト計算用の定数（px）
-  const CARD_WIDTH_NORMAL = 236; // 元の5列グリッドと揃えた幅
-  const CARD_WIDTH_SMALL = 200;  // スモールサイズ
-  const CARD_GAP = 16;           // gap-4 相当
+  const CARD_WIDTH_NORMAL = 220;
+  const CARD_WIDTH_SMALL = 190;
+  const CARD_GAP = 12; // gap-3
+  const SIDEBAR_WIDTH = 288; // w-72
+  const OUTER_GAP = 24; // gap-6
+  const PADDING_X = 32; // main の px-4 * 2
 
-  function decideLayout(width: number) {
+  function decideLayout(viewportWidth: number) {
     type Combo = { size: CardSize; count: number; cardWidth: number };
 
     const combos: Combo[] = [
@@ -219,38 +227,35 @@ export default function Page() {
       { size: "small", count: 3, cardWidth: CARD_WIDTH_SMALL }
     ];
 
+    const available = viewportWidth - PADDING_X;
+
     for (const c of combos) {
-      const totalWidth = c.count * c.cardWidth + (c.count - 1) * CARD_GAP;
-      if (totalWidth <= width) {
+      const cardsWidth =
+        c.count * c.cardWidth + (c.count - 1) * CARD_GAP;
+      const totalWidth = cardsWidth + SIDEBAR_WIDTH + OUTER_GAP;
+
+      if (totalWidth <= available) {
         setCardSize(c.size);
         setCardsPerPage(c.count);
         return;
       }
     }
 
-    // 極端に狭い場合はスモール3固定
+    // どの組み合わせも入らない場合の最小レイアウト：スモール3枚
     setCardSize("small");
     setCardsPerPage(3);
   }
 
-  // 幅を監視して 5/4/3 & 通常/スモールを決定
+  // ウィンドウ幅を監視してレイアウト決定
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const current = el;
+    function handleResize() {
+      if (typeof window === "undefined") return;
+      decideLayout(window.innerWidth);
+    }
 
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      const width = entry.contentRect.width;
-      if (width > 0) {
-        decideLayout(width);
-      }
-    });
-
-    observer.observe(current);
-    decideLayout(current.clientWidth);
-
-    return () => observer.disconnect();
+    handleResize(); // 初回
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   // ページ数と currentPage の補正
@@ -271,8 +276,17 @@ export default function Page() {
       '"Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"'
   } as const;
 
+  // カード列 1 行分の実際の幅
+  const cardWidthPx =
+    cardSize === "normal" ? CARD_WIDTH_NORMAL : CARD_WIDTH_SMALL;
+
+  const rowCardsWidth =
+    cardsPerPage * cardWidthPx + (cardsPerPage - 1) * CARD_GAP;
+
+  const layoutTotalWidth = rowCardsWidth + SIDEBAR_WIDTH + OUTER_GAP;
+
   const cardWidthClass =
-    cardSize === "normal" ? "w-[236px]" : "w-[200px]";
+    cardSize === "normal" ? "w-[220px]" : "w-[190px]";
 
   const handlePrev = () => {
     setCurrentPage((p) => Math.max(0, p - 1));
@@ -282,7 +296,7 @@ export default function Page() {
     setCurrentPage((p) => Math.min(totalPages - 1, p + 1));
   };
 
-  // 現在ページに表示するカードだけを計算（横方向にスクロールしているイメージ）
+  // 現在ページに表示するカード
   const startIndex = currentPage * cardsPerPage;
   const visibleCards = filtered.slice(startIndex, startIndex + cardsPerPage);
 
@@ -304,7 +318,7 @@ export default function Page() {
         className="sticky top-0 z-40 border-b border-slate-200"
         style={{ backgroundColor: "#001e43" }}
       >
-        <div className="mx-auto max-w-7xl px-4 text-white">
+        <div className="mx-auto max-w-[1500px] px-4 text-white">
           <div className="flex h-16 items-center gap-3">
             {/* 左：ロゴ */}
             <div className="flex items-center gap-3">
@@ -379,72 +393,158 @@ export default function Page() {
         </div>
       </header>
 
-      {/* 「あなたにおすすめ」 */}
-      <main className="mx-auto max-w-7xl px-4 py-6">
-        {/* 見出し + 矢印 */}
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-[#001e43] tracking-wide">
-            あなたにおすすめ
-          </h2>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handlePrev}
-              disabled={currentPage === 0 || totalPages <= 1}
-              className="h-8 w-8 rounded-full border border-slate-300 bg-white flex items-center justify-center text-slate-600 disabled:opacity-30 disabled:cursor-default"
-              aria-label="前へ"
+      {/* メイン */}
+      <main className="mx-auto max-w-[1500px] px-4 py-6 overflow-x-auto">
+        {/* レイアウト全体を shrink-to-fit させて中央寄せ */}
+        <div className="flex justify-center">
+          <div
+            className="flex flex-row gap-6"
+            style={{ minWidth: layoutTotalWidth }}
+          >
+            {/* 左：あなたにおすすめ（幅はカード列ぴったり） */}
+            <section
+              className="min-w-0 flex-none"
+              style={{ width: rowCardsWidth }}
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-              >
-                <path
-                  d="M15 18l-6-6 6-6"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={handleNext}
-              disabled={currentPage === totalPages - 1 || totalPages <= 1}
-              className="h-8 w-8 rounded-full border border-slate-300 bg-white flex items-center justify-center text-slate-600 disabled:opacity-30 disabled:cursor-default"
-              aria-label="次へ"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-              >
-                <path
-                  d="M9 6l6 6-6 6"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* 現在ページ分だけ表示（カードは2サイズのみ・シャドウは一切クリップされない） */}
-        <div ref={containerRef} className="w-full">
-          <div className="flex gap-4">
-            {visibleCards.map((d) => (
-              <div
-                key={d.id}
-                className={`${cardWidthClass} flex-none`}
-              >
-                <Card d={d} />
+              {/* 見出し + 矢印 */}
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-[#001e43] tracking-wide">
+                  あなたにおすすめ
+                </h2>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrev}
+                    disabled={currentPage === 0 || totalPages <= 1}
+                    className="h-8 w-8 rounded-full border border-slate-300 bg-white flex items-center justify-center text-slate-600 disabled:opacity-30 disabled:cursor-default"
+                    aria-label="前へ"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                    >
+                      <path
+                        d="M15 18l-6-6 6-6"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNext}
+                    disabled={
+                      currentPage === totalPages - 1 || totalPages <= 1
+                    }
+                    className="h-8 w-8 rounded-full border border-slate-300 bg-white flex items-center justify-center text-slate-600 disabled:opacity-30 disabled:cursor-default"
+                    aria-label="次へ"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                    >
+                      <path
+                        d="M9 6l6 6-6 6"
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
-            ))}
+
+              {/* カード列 */}
+              <div className="w-full">
+                <div className="flex gap-3">
+                  {visibleCards.map((d) => (
+                    <div key={d.id} className={`${cardWidthClass} flex-none`}>
+                      <Card d={d} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {/* 右：サイドカラム（上端をカードと揃えるために mt を追加） */}
+            <aside className="w-72 flex-none space-y-4 mt-[44px]">
+              {/* 人気のディール */}
+              <section className="rounded-lg bg-white shadow-md ring-1 ring-slate-200 overflow-hidden">
+                <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
+                  <h3 className="text-xs font-semibold text-slate-700 tracking-wide">
+                    人気のディール
+                  </h3>
+                </div>
+                <ol className="divide-y divide-slate-100 text-xs">
+                  {POPULAR_DEALS.slice(0, 5).map((d, idx) => (
+                    <li
+                      key={d.id}
+                      className="px-3 py-2 flex items-start gap-2 hover:bg-slate-50"
+                    >
+                      <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700">
+                        {idx + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <MarketTag market={d.market} />
+                        </div>
+                        <div className="mt-0.5 text-[12px] text-slate-800 line-clamp-2">
+                          {d.title}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-3 text-[11px] text-slate-500">
+                          <span>{yen(d.price)}</span>
+                          <span className="inline-flex items-center gap-1">
+                            <ThumbsUp className="h-3 w-3" /> {d.likes}
+                          </span>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+
+              {/* 人気急上昇中のディール */}
+              <section className="rounded-lg bg-white shadow-md ring-1 ring-slate-200 overflow-hidden">
+                <div className="px-3 py-2 border-b border-slate-200 bg-slate-50">
+                  <h3 className="text-xs font-semibold text-slate-700 tracking-wide">
+                    人気急上昇中のディール
+                  </h3>
+                </div>
+                <ol className="divide-y divide-slate-100 text-xs">
+                  {TRENDING_DEALS.slice(0, 5).map((d, idx) => (
+                    <li
+                      key={d.id}
+                      className="px-3 py-2 flex items-start gap-2 hover:bg-slate-50"
+                    >
+                      <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-700">
+                        {idx + 1}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1">
+                          <MarketTag market={d.market} />
+                        </div>
+                        <div className="mt-0.5 text-[12px] text-slate-800 line-clamp-2">
+                          {d.title}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-3 text-[11px] text-slate-500">
+                          <span>{yen(d.price)}</span>
+                          <span className="inline-flex items-center gap-1">
+                            <MessageSquare className="h-3 w-3" /> {d.comments}
+                          </span>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            </aside>
           </div>
         </div>
       </main>
