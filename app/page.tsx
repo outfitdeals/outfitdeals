@@ -49,7 +49,7 @@ const DEALS = [
     market: "楽天市場",
     shopName: "Sports Lab by atmos",
     image:
-      "https://images.unsplash.com/photo-1520975922325-24e0b592f43f?w=1200&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1520975922325-24e0b5922325?w=1200&auto=format&fit=crop",
     likes: 42,
     comments: 11
   },
@@ -86,6 +86,23 @@ const DEALS = [
     comments: 14
   }
 ];
+
+// トップディール用ダミーデータ（Sample 画像付きで 50 件分）
+const TOP_DEALS = Array.from({ length: 50 }, (_, i) => ({
+  id: 200 + i,
+  user: "sampleuser",
+  avatar:
+    "https://images.unsplash.com/photo-1544723795-3fb6469f5b39?w=80&h=80&crop=faces&auto=format",
+  time: "今日 10:00",
+  title: `Sample トップディール ${i + 1}`,
+  price: 4990,
+  orig: 8990,
+  market: i % 2 === 0 ? "楽天市場" : "Yahoo!ショッピング",
+  shopName: "Sample Shop",
+  image: "https://via.placeholder.com/600x600?text=Sample",
+  likes: 10 + (i % 15),
+  comments: 2 + (i % 5)
+}));
 
 // 右カラム用：人気順・コメント順
 const POPULAR_DEALS = [...DEALS].sort((a, b) => b.likes - a.likes);
@@ -401,7 +418,7 @@ export default function Page() {
             className="flex flex-row gap-6"
             style={{ minWidth: layoutTotalWidth }}
           >
-            {/* 左：あなたにおすすめ（幅はカード列ぴったり） */}
+            {/* 左：あなたにおすすめ + トップディール（幅はカード列ぴったり） */}
             <section
               className="min-w-0 flex-none"
               style={{ width: rowCardsWidth }}
@@ -461,7 +478,7 @@ export default function Page() {
                 </div>
               </div>
 
-              {/* カード列 */}
+              {/* あなたにおすすめ：1 行分のカード */}
               <div className="w-full">
                 <div className="flex gap-3">
                   {visibleCards.map((d) => (
@@ -469,6 +486,27 @@ export default function Page() {
                       <Card d={d} />
                     </div>
                   ))}
+                </div>
+              </div>
+
+              {/* トップディール：グリッド 3〜5 列 × 最大 10 行 */}
+              <div className="mt-8">
+                <h2 className="text-xl font-semibold text-[#001e43] tracking-wide">
+                  トップディール
+                </h2>
+                <div className="mt-3">
+                  <div
+                    className="grid gap-3"
+                    style={{
+                      gridTemplateColumns: `repeat(${cardsPerPage}, ${cardWidthPx}px)`
+                    }}
+                  >
+                    {TOP_DEALS.slice(0, cardsPerPage * 10).map((d) => (
+                      <div key={d.id} className="flex-none">
+                        <Card d={d} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </section>
