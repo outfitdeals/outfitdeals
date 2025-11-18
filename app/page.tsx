@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { Search, MessageSquare, ThumbsUp, Bookmark } from "lucide-react";
+import { supabase } from "@/lib/supabaseClient";
 
 // ---- ダミーデータ（楽天市場 / Yahoo!ショッピング）
 const DEALS = [
@@ -19,7 +21,7 @@ const DEALS = [
     image:
       "https://images.unsplash.com/photo-1503342452485-86ff0a2514d2?w=1200&auto=format&fit=crop",
     likes: 18,
-    comments: 6
+    comments: 6,
   },
   {
     id: 102,
@@ -35,7 +37,7 @@ const DEALS = [
     image:
       "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=1200&auto=format&fit=crop",
     likes: 25,
-    comments: 9
+    comments: 9,
   },
   {
     id: 103,
@@ -51,7 +53,7 @@ const DEALS = [
     image:
       "https://images.unsplash.com/photo-1520975922325-24e0b5922325?w=1200&auto=format&fit=crop",
     likes: 42,
-    comments: 11
+    comments: 11,
   },
   {
     id: 104,
@@ -67,7 +69,7 @@ const DEALS = [
     image:
       "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=1200&auto=format&fit=crop",
     likes: 7,
-    comments: 0
+    comments: 0,
   },
   {
     id: 105,
@@ -83,25 +85,25 @@ const DEALS = [
     image:
       "https://images.unsplash.com/photo-1516826957135-700dedea698c?w=1200&auto=format&fit=crop",
     likes: 63,
-    comments: 14
-  }
+    comments: 14,
+  },
 ];
 
-// トップディール用ダミーデータ（Sample 画像付きで 50 件分）
-const TOP_DEALS = Array.from({ length: 50 }, (_, i) => ({
+// ---- トップディール用ダミーデータ（100件用意して 1ページ50件ずつ表示）
+const TOP_DEALS_ALL = Array.from({ length: 100 }, (_, i) => ({
   id: 200 + i,
   user: "sampleuser",
   avatar:
     "https://images.unsplash.com/photo-1544723795-3fb6469f5b39?w=80&h=80&crop=faces&auto=format",
   time: "今日 10:00",
   title: `Sample トップディール ${i + 1}`,
-  price: 4990,
-  orig: 8990,
+  price: 4990 + (i % 5) * 500,
+  orig: 8990 + (i % 5) * 500,
   market: i % 2 === 0 ? "楽天市場" : "Yahoo!ショッピング",
-  shopName: "Sample Shop",
+  shopName: `Sample Shop ${((i % 10) + 1).toString().padStart(2, "0")}`,
   image: "https://via.placeholder.com/600x600?text=Sample",
-  likes: 10 + (i % 15),
-  comments: 2 + (i % 5)
+  likes: 10 + (i % 40),
+  comments: 2 + (i % 10),
 }));
 
 // 右カラム用：人気順・コメント順
@@ -122,7 +124,7 @@ function MarketTag({ market }: { market: string }) {
       style={{
         borderColor: base.border,
         color: base.text,
-        backgroundColor: base.bg
+        backgroundColor: base.bg,
       }}
       className="inline-flex items-center px-1 py-[1px] text-[10px] font-medium border rounded-none"
     >
@@ -212,6 +214,19 @@ export default function Page() {
   const [cardsPerPage, setCardsPerPage] = useState<number>(5);
   const [currentPage, setCurrentPage] = useState<number>(0);
 
+  // Supabase ログインユーザー
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+
+  const searchParams = useSearchParams();
+  const pageParam = searchParams.get("page");
+  const topDealsPage = pageParam === "2" ? 2 : 1; // 1 or 2 ページ
+
+  // このページで表示するトップディール 50件
+  const topDealsForThisPage = TOP_DEALS_ALL.slice(
+    (topDealsPage - 1) * 50,
+    topDealsPage * 50
+  );
+
   const filtered = useMemo(
     () =>
       DEALS.filter((d) =>
@@ -241,14 +256,13 @@ export default function Page() {
       { size: "normal", count: 4, cardWidth: CARD_WIDTH_NORMAL },
       { size: "small", count: 4, cardWidth: CARD_WIDTH_SMALL },
       { size: "normal", count: 3, cardWidth: CARD_WIDTH_NORMAL },
-      { size: "small", count: 3, cardWidth: CARD_WIDTH_SMALL }
+      { size: "small", count: 3, cardWidth: CARD_WIDTH_SMALL },
     ];
 
     const available = viewportWidth - PADDING_X;
 
     for (const c of combos) {
-      const cardsWidth =
-        c.count * c.cardWidth + (c.count - 1) * CARD_GAP;
+      const cardsWidth = c.count * c.cardWidth + (c.count - 1) * CARD_GAP;
       const totalWidth = cardsWidth + SIDEBAR_WIDTH + OUTER_GAP;
 
       if (totalWidth <= available) {
@@ -275,7 +289,7 @@ export default function Page() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // ページ数と currentPage の補正
+  // ページ数と currentPage の補正（あなたにおすすめ用）
   const totalPages = Math.max(
     1,
     cardsPerPage > 0 ? Math.ceil(filtered.length / cardsPerPage) : 1
@@ -287,10 +301,17 @@ export default function Page() {
     }
   }, [totalPages, currentPage]);
 
+  // 初回マウント時にログイン中のユーザーを取得
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setCurrentUser(data.user ?? null);
+    });
+  }, []);
+
   // フォント
   const fontJP = {
     fontFamily:
-      '"Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"'
+      '"Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"',
   } as const;
 
   // カード列 1 行分の実際の幅
@@ -313,7 +334,14 @@ export default function Page() {
     setCurrentPage((p) => Math.min(totalPages - 1, p + 1));
   };
 
-  // 現在ページに表示するカード
+  // ログアウト処理
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setCurrentUser(null);
+    window.location.href = "/";
+  };
+
+  // 現在ページに表示するカード（あなたにおすすめ）
   const startIndex = currentPage * cardsPerPage;
   const visibleCards = filtered.slice(startIndex, startIndex + cardsPerPage);
 
@@ -358,7 +386,7 @@ export default function Page() {
               />
             </div>
 
-            {/* 右：アイコン（投稿・マイページ） */}
+            {/* 右：投稿 + ログイン / マイページ + ログアウト */}
             <div className="flex items-center gap-3 ml-3">
               {/* 投稿する */}
               <button
@@ -383,28 +411,64 @@ export default function Page() {
                 <span className="text-sm font-medium">投稿</span>
               </button>
 
-              {/* マイページ */}
-              <button
-                className="hidden sm:inline-flex items-center gap-1 text-white/90 hover:text-white"
-                title="マイページ"
-                type="button"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
+              {currentUser ? (
+                <>
+                  {/* ログイン済：マイページアイコン */}
+                  <button
+                    className="hidden sm:inline-flex items-center gap-1 text-white/90 hover:text-white"
+                    title="マイページ"
+                    type="button"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5.121 17.804A13.937 13.937 0 0112 15c2.485 0 4.797.635 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                    </svg>
+                    <span className="text-sm font-medium">マイページ</span>
+                  </button>
+
+                  {/* ログアウト */}
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="inline-flex items-center gap-1 rounded-full border border-white/40 px-3 py-1 text-xs font-medium text-white hover:bg-white/10"
+                  >
+                    ログアウト
+                  </button>
+                </>
+              ) : (
+                // 未ログイン：ログインボタン（マイページアイコンの代わり）
+                <a
+                  href="/auth"
+                  className="hidden sm:inline-flex items-center gap-1 text-white/90 hover:text-white"
+                  title="ログイン"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5.121 17.804A13.937 13.937 0 0112 15c2.485 0 4.797.635 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                </svg>
-                <span className="text-sm font-medium">マイページ</span>
-              </button>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5.121 17.804A13.937 13.937 0 0112 15c2.485 0 4.797.635 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium">ログイン</span>
+                </a>
+              )}
             </div>
           </div>
         </div>
@@ -418,13 +482,13 @@ export default function Page() {
             className="flex flex-row gap-6"
             style={{ minWidth: layoutTotalWidth }}
           >
-            {/* 左：あなたにおすすめ + トップディール（幅はカード列ぴったり） */}
+            {/* 左：あなたにおすすめ + トップディール */}
             <section
               className="min-w-0 flex-none"
               style={{ width: rowCardsWidth }}
             >
               {/* 見出し + 矢印 */}
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex items中心 justify-between">
                 <h2 className="text-xl font-semibold text-[#001e43] tracking-wide">
                   あなたにおすすめ
                 </h2>
@@ -489,7 +553,7 @@ export default function Page() {
                 </div>
               </div>
 
-              {/* トップディール：グリッド 3〜5 列 × 最大 10 行 */}
+              {/* トップディール：グリッド 3〜5 列・ページネーション付き */}
               <div className="mt-8">
                 <h2 className="text-xl font-semibold text-[#001e43] tracking-wide">
                   トップディール
@@ -498,20 +562,49 @@ export default function Page() {
                   <div
                     className="grid gap-3"
                     style={{
-                      gridTemplateColumns: `repeat(${cardsPerPage}, ${cardWidthPx}px)`
+                      gridTemplateColumns: `repeat(${cardsPerPage}, ${cardWidthPx}px)`,
                     }}
                   >
-                    {TOP_DEALS.slice(0, cardsPerPage * 10).map((d) => (
+                    {topDealsForThisPage.map((d) => (
                       <div key={d.id} className="flex-none">
                         <Card d={d} />
                       </div>
                     ))}
                   </div>
+
+                  {/* Slickdeals風：右下「前へ」「次へ」 */}
+                  <div className="mt-6 flex justify-end">
+                    <div className="flex items-center gap-3">
+                      {/* 前へ（page=1 のとき無効） */}
+                      <a
+                        href="/?page=1"
+                        className={
+                          topDealsPage === 1
+                            ? "inline-flex items-center gap-1 px-4 py-1.5 rounded-full border border-slate-200 bg-slate-100 text-slate-400 cursor-default pointer-events-none text-sm"
+                            : "inline-flex items-center gap-1 px-4 py-1.5 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-sm text-black"
+                        }
+                      >
+                        前へ
+                      </a>
+
+                      {/* 次へ（page=2 のとき無効） */}
+                      <a
+                        href="/?page=2"
+                        className={
+                          topDealsPage === 2
+                            ? "inline-flex items-center gap-1 px-4 py-1.5 rounded-full border border-slate-200 bg-slate-100 text-slate-400 cursor-default pointer-events-none text-sm"
+                            : "inline-flex items-center gap-1 px-4 py-1.5 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-sm text-black"
+                        }
+                      >
+                        次へ
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
 
-            {/* 右：サイドカラム（上端をカードと揃えるために mt を追加） */}
+            {/* 右：サイドカラム */}
             <aside className="w-72 flex-none space-y-4 mt-[44px]">
               {/* 人気のディール */}
               <section className="rounded-lg bg-white shadow-md ring-1 ring-slate-200 overflow-hidden">
