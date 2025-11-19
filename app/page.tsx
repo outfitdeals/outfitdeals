@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
 import { Search, MessageSquare, ThumbsUp, Bookmark } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -217,9 +216,8 @@ export default function Page() {
   // Supabase ログインユーザー
   const [currentUser, setCurrentUser] = useState<any | null>(null);
 
-  const searchParams = useSearchParams();
-  const pageParam = searchParams.get("page");
-  const topDealsPage = pageParam === "2" ? 2 : 1; // 1 or 2 ページ
+  // トップディールのページ（1 or 2）
+  const [topDealsPage, setTopDealsPage] = useState<1 | 2>(1);
 
   // このページで表示するトップディール 50件
   const topDealsForThisPage = TOP_DEALS_ALL.slice(
@@ -306,6 +304,14 @@ export default function Page() {
     supabase.auth.getUser().then(({ data }) => {
       setCurrentUser(data.user ?? null);
     });
+  }, []);
+
+  // 初回と URL 変更時に ?page= を読む
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get("page");
+    setTopDealsPage(p === "2" ? 2 : 1);
   }, []);
 
   // フォント
@@ -446,7 +452,7 @@ export default function Page() {
                   </button>
                 </>
               ) : (
-                // 未ログイン：ログインボタン（マイページアイコンの代わり）
+                // 未ログイン：ログインボタン
                 <a
                   href="/auth"
                   className="hidden sm:inline-flex items-center gap-1 text-white/90 hover:text-white"
@@ -488,7 +494,7 @@ export default function Page() {
               style={{ width: rowCardsWidth }}
             >
               {/* 見出し + 矢印 */}
-              <div className="mb-3 flex items中心 justify-between">
+              <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-[#001e43] tracking-wide">
                   あなたにおすすめ
                 </h2>
