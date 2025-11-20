@@ -306,7 +306,7 @@ export default function Page() {
     });
   }, []);
 
-  // 初回と URL 変更時に ?page= を読む
+  // 初回に ?page= を読む
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -419,11 +419,11 @@ export default function Page() {
 
               {currentUser ? (
                 <>
-                  {/* ログイン済：マイページアイコン */}
-                  <button
+                  {/* ログイン済：マイページリンク */}
+                  <a
+                    href="/mypage"
                     className="hidden sm:inline-flex items-center gap-1 text-white/90 hover:text-white"
                     title="マイページ"
-                    type="button"
                   >
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -440,7 +440,7 @@ export default function Page() {
                       />
                     </svg>
                     <span className="text-sm font-medium">マイページ</span>
-                  </button>
+                  </a>
 
                   {/* ログアウト */}
                   <button
