@@ -663,13 +663,6 @@ function PostPageContent() {
         setFreeShipping(data.freeShipping);
       }
 
-      if (typeof data.endTime === "string" && data.endTime.trim()) {
-        const normalizedEndTime = data.endTime.trim().replace(/-/g, "/");
-        setExpiresAt(normalizedEndTime);
-      } else {
-        setExpiresAt("");
-      }
-
       setManualMode(false);
     } catch (err: any) {
       console.error("rakuten-preview error:", err);
@@ -1107,7 +1100,7 @@ function PostPageContent() {
                   : "border-slate-300"
               } focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43] sm:rounded sm:text-sm`}
               rows={5}
-              placeholder="このアイテムはおトク？あなたの意見を教えてください！"
+              placeholder="価格情報、クーポン、サイズ感、注意点などを入力してください。"
               value={comment}
               onChange={(e) => {
                 setComment(e.target.value);
@@ -1128,12 +1121,12 @@ function PostPageContent() {
               <textarea
                 rows={6}
                 value={itemDescription}
-                onChange={(e) => setItemDescription(e.target.value)}
                 placeholder="楽天から自動取得した商品説明がここに入ります"
-                className="w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43]"
+                disabled
+                className="w-full resize-none rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm leading-6 text-slate-600 placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-100"
               />
               <p className="mt-1 text-xs text-slate-500">
-                楽天から自動入力した場合は商品説明を自動取得します。必要に応じて編集できます。
+                商品詳細は楽天から自動取得されます。手動入力・編集はできません。
               </p>
             </div>
 
@@ -1236,7 +1229,7 @@ function PostPageContent() {
 
             <div>
               <label className="block text-sm font-semibold text-slate-800">
-                セール終了日時
+                有効期限
               </label>
               <div className="relative mt-1.5">
                 <input

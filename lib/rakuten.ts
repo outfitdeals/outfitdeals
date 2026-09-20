@@ -548,110 +548,11 @@ function getFreeShippingFromPostageFlag(
 }
 
 function cleanRakutenItemCaption(value: string | undefined | null): string | null {
-  let text = String(value ?? "")
-    .replace(/\r\n?/g, "\n")
+  const text = String(value ?? "")
+    .replace(/\r\n?|\n/g, " ")
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
     .trim();
-
-  if (!text) return null;
-
-  // 商品説明の前に置かれやすい「関連ワード」のSEOキーワード列を除去。
-  text = text.replace(
-    /^\s*(?:【?\s*)?\[?関連ワード\]?[：:\s]*[\s\S]*?(?=(?:【[^】]{2,80}】|メーカー希望小売価格|商品説明|商品の特徴))/i,
-    ""
-  );
-
-  // 商品説明ではない定型文を除去。
-  const boilerplatePatterns = [
-    /メーカー希望小売価格はメーカーサイトに基づいて掲載しています/gi,
-    /メーカー希望小売価格はメーカーカタログに基づいて掲載しています/gi,
-    /メーカーサイトTOP/gi,
-    /メーカーサイト会社概要/gi,
-    /メーカーサイト特定商取引法表示/gi,
-    /会社概要/gi,
-    /特定商取引法表示/gi,
-  ];
-
-  for (const pattern of boilerplatePatterns) {
-    text = text.replace(pattern, " ");
-  }
-
-  text = text
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  // 楽天APIではサイズ表のセル構造が失われ、数値が連結されることがある。
-  // 誤った表を復元しないため、明確なサイズ・採寸セクションが始まった時点で
-  // 商品詳細の自動取得を終了する。一般文中の「サイズ」「サイズ感」では切らない。
-  const detailStopPatterns = [
-    /サイズ表\s*[（(]\s*(?:cm|ＣＭ)\s*[）)]/i,
-    /【\s*サイズ表\s*】/i,
-    /【\s*サイズ詳細\s*】/i,
-    /【\s*サイズスペック\s*】/i,
-    /【\s*採寸表\s*】/i,
-    /(?:^|\n)\s*サイズスペック\s*(?:[：:]|\n)/im,
-    /(?:^|\n)\s*採寸表\s*(?:[：:]|\n)/im,
-  ];
-
-  let stopIndex = -1;
-  for (const pattern of detailStopPatterns) {
-    const match = pattern.exec(text);
-    if (match?.index != null && (stopIndex === -1 || match.index < stopIndex)) {
-      stopIndex = match.index;
-    }
-  }
-
-  if (stopIndex >= 0) {
-    text = text.slice(0, stopIndex).trim();
-  }
-
-  // 元データに改行がない商品でも読みやすくする。
-  // 単語を推測で分割せず、明確な見出しと文末記号だけを使う。
-  text = text
-    .replace(/【\s*商品説明\s*】/g, "\n\n【商品説明】\n")
-    .replace(/([。！？])(?=\S)/g, "$1\n")
-    .replace(/([!！])(?=\s*※)/g, "$1\n\n")
-    .replace(/(?<!^)※(?=\S)/g, "\n\n※")
-    .replace(/^\s+/, "")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  // まだ極端に長い場合だけ、説明文らしい開始位置まで前半を落とす。
-  if (text.length > 1800) {
-    const markers = [
-      /【[^】]{2,80}】/,
-      /(?:日差し|紫外線|素材|着心地|デザイン|特徴|ポイント)[^。]{0,80}。/,
-    ];
-
-    for (const marker of markers) {
-      const match = text.match(marker);
-      if (match?.index != null && match.index > 250) {
-        text = text.slice(match.index).trim();
-        break;
-      }
-    }
-  }
-
-  // 詳細欄が長大にならないよう、文章の切れ目を優先して上限を設ける。
-  const maxLength = 1600;
-  if (text.length > maxLength) {
-    const clipped = text.slice(0, maxLength);
-    const lastSentence = Math.max(
-      clipped.lastIndexOf("。"),
-      clipped.lastIndexOf("！"),
-      clipped.lastIndexOf("？")
-    );
-
-    text =
-      lastSentence >= 600
-        ? clipped.slice(0, lastSentence + 1).trim()
-        : `${clipped.trim()}…`;
-  }
 
   return text || null;
 }

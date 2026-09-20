@@ -383,6 +383,18 @@ export default function DealDetailPage() {
     };
   }, [isMobile, showStickyDesktopCta]);
 
+  const myDisplayName = useMemo(() => {
+    const u = currentUser;
+    if (!u) return null;
+    const meta = u.user_metadata ?? {};
+    return (
+      meta.username ??
+      meta.full_name ??
+      meta.name ??
+      (u.email ? u.email.split("@")[0] : null)
+    );
+  }, [currentUser]);
+
   const discountPercent = useMemo(() => {
     if (!deal) return null;
     return getDiscountPercent(deal.price, deal.orig_price);
@@ -904,10 +916,11 @@ export default function DealDetailPage() {
     });
 
     const normalizedComments = baseComments.map((c) => {
-      const nameFromProfiles = c.user_id
-        ? usernameMap[String(c.user_id)] ?? null
-        : null;
-      const name = nameFromProfiles ?? "匿名ユーザー";
+      const nameFromProfiles = c.user_id ? usernameMap[String(c.user_id)] ?? null : null;
+      const name =
+        currentUser && c.user_id === currentUser.id
+          ? myDisplayName ?? nameFromProfiles ?? "匿名ユーザー"
+          : nameFromProfiles ?? "匿名ユーザー";
 
       return {
         ...c,
@@ -919,7 +932,7 @@ export default function DealDetailPage() {
     });
 
     setComments(normalizedComments);
-  }, [id, currentUser]);
+  }, [id, currentUser, myDisplayName]);
 
   useEffect(() => {
     loadComments();
@@ -1504,6 +1517,17 @@ export default function DealDetailPage() {
         setCommentError("コメントの投稿に失敗しました。");
         return;
       }
+
+      setComments((prev) => [
+        ...prev,
+        {
+          ...(data as any),
+          username: myDisplayName ?? "匿名ユーザー",
+          like_count: 0,
+          has_liked: false,
+          replies: [],
+        },
+      ]);
 
       setCommentBody("");
       setMobileCommentComposer(null);
@@ -3352,7 +3376,7 @@ export default function DealDetailPage() {
                           className={`relative ${
                             productDetailsExpanded
                               ? ""
-                              : "max-h-[280px] overflow-hidden"
+                              : "max-h-[72px] overflow-hidden"
                           }`}
                         >
                           <p className="whitespace-pre-wrap text-sm leading-7 text-slate-800">
@@ -3363,7 +3387,7 @@ export default function DealDetailPage() {
                             <button
                               type="button"
                               onClick={() => setProductDetailsExpanded(true)}
-                              className="absolute inset-x-0 bottom-0 flex h-28 cursor-pointer items-end justify-center bg-gradient-to-b from-white/0 via-white/80 to-white pb-2 text-sm font-semibold text-[#006888]"
+                              className="absolute inset-x-0 bottom-0 flex h-16 cursor-pointer items-end justify-center bg-gradient-to-b from-white/0 via-white/90 to-white pb-1 text-sm font-semibold text-[#006888]"
                               aria-label="商品詳細をすべて表示"
                             >
                               もっと見る
