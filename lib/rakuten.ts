@@ -29,6 +29,7 @@ export type RakutenItemPreview = {
   shopCode: string;
   freeShipping: boolean | null;
   itemDescription: string | null;
+  endTime: string | null;
 };
 
 type ParsedRakutenUrl = {
@@ -47,6 +48,7 @@ type RakutenApiItem = {
   smallImageUrls?: Array<string | { imageUrl?: string }>;
   postageFlag?: number | string;
   itemCaption?: string;
+  endTime?: string;
 };
 
 export function parseRakutenItemUrl(rawUrl: string): ParsedRakutenUrl {
@@ -225,8 +227,8 @@ async function fetchWithTimeoutAndRetry(url: string): Promise<Response> {
       const res = await fetch(url, {
         method: "GET",
         headers: {
-          Referer: "https://outfitdeals.vercel.app/",
-          Origin: "https://outfitdeals.vercel.app",
+          Referer: "https://www.tokumikke.com/",
+          Origin: "https://www.tokumikke.com",
         },
         cache: "no-store",
         signal: controller.signal,
@@ -581,6 +583,44 @@ function cleanRakutenItemCaption(value: string | undefined | null): string | nul
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
+  // 楽天APIではサイズ表のセル構造が失われ、数値が連結されることがある。
+  // 誤った表を復元しないため、明確なサイズ・採寸セクションが始まった時点で
+  // 商品詳細の自動取得を終了する。一般文中の「サイズ」「サイズ感」では切らない。
+  const detailStopPatterns = [
+    /サイズ表\s*[（(]\s*(?:cm|ＣＭ)\s*[）)]/i,
+    /【\s*サイズ表\s*】/i,
+    /【\s*サイズ詳細\s*】/i,
+    /【\s*サイズスペック\s*】/i,
+    /【\s*採寸表\s*】/i,
+    /(?:^|\n)\s*サイズスペック\s*(?:[：:]|\n)/im,
+    /(?:^|\n)\s*採寸表\s*(?:[：:]|\n)/im,
+  ];
+
+  let stopIndex = -1;
+  for (const pattern of detailStopPatterns) {
+    const match = pattern.exec(text);
+    if (match?.index != null && (stopIndex === -1 || match.index < stopIndex)) {
+      stopIndex = match.index;
+    }
+  }
+
+  if (stopIndex >= 0) {
+    text = text.slice(0, stopIndex).trim();
+  }
+
+  // 元データに改行がない商品でも読みやすくする。
+  // 単語を推測で分割せず、明確な見出しと文末記号だけを使う。
+  text = text
+    .replace(/【\s*商品説明\s*】/g, "\n\n【商品説明】\n")
+    .replace(/([。！？])(?=\S)/g, "$1\n")
+    .replace(/([!！])(?=\s*※)/g, "$1\n\n")
+    .replace(/(?<!^)※(?=\S)/g, "\n\n※")
+    .replace(/^\s+/, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
   // まだ極端に長い場合だけ、説明文らしい開始位置まで前半を落とす。
   if (text.length > 1800) {
     const markers = [
@@ -683,6 +723,7 @@ export async function fetchRakutenItemByUrl(
             chosen.postageFlag
           ),
           itemDescription: cleanRakutenItemCaption(chosen.itemCaption),
+          endTime: String(chosen.endTime ?? "").trim() || null,
         };
       }
     }
@@ -725,6 +766,7 @@ export async function fetchRakutenItemByUrl(
       finalChosen.postageFlag
     ),
     itemDescription: cleanRakutenItemCaption(finalChosen.itemCaption),
+    endTime: String(finalChosen.endTime ?? "").trim() || null,
   };
 
   console.log("[rakuten] final preview:", {

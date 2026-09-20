@@ -20,10 +20,10 @@ function normalizeText(value: string) {
 function japanDateTimeLocalToIso(value: string) {
   const match = value
     .trim()
-    .match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/);
+    .match(/^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})$/);
   if (!match) return null;
 
-  const [, month, day, year, hour, minute] = match;
+  const [, year, month, day, hour, minute] = match;
   const y = Number(year);
   const m = Number(month);
   const d = Number(day);
@@ -76,7 +76,7 @@ function isoToJapanDateTimeLocal(value: string) {
   const part = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((item) => item.type === type)?.value ?? "";
 
-  return `${part("month")}/${part("day")}/${part("year")} ${part("hour")}:${part("minute")}`;
+  return `${part("year")}/${part("month")}/${part("day")} ${part("hour")}:${part("minute")}`;
 }
 
 function pickerValueToDisplay(value: string) {
@@ -86,16 +86,16 @@ function pickerValueToDisplay(value: string) {
   if (!match) return "";
 
   const [, year, month, day, hour, minute] = match;
-  return `${month}/${day}/${year} ${hour}:${minute}`;
+  return `${year}/${month}/${day} ${hour}:${minute}`;
 }
 
 function displayValueToPicker(value: string) {
   const match = value
     .trim()
-    .match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/);
+    .match(/^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})$/);
   if (!match) return "";
 
-  const [, month, day, year, hour, minute] = match;
+  const [, year, month, day, hour, minute] = match;
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
@@ -663,6 +663,13 @@ function PostPageContent() {
         setFreeShipping(data.freeShipping);
       }
 
+      if (typeof data.endTime === "string" && data.endTime.trim()) {
+        const normalizedEndTime = data.endTime.trim().replace(/-/g, "/");
+        setExpiresAt(normalizedEndTime);
+      } else {
+        setExpiresAt("");
+      }
+
       setManualMode(false);
     } catch (err: any) {
       console.error("rakuten-preview error:", err);
@@ -898,7 +905,7 @@ function PostPageContent() {
   const autoDisabled = !manualMode;
 
   return (
-    <div className="min-h-screen bg-[#fffafa]">
+    <div className="min-h-screen bg-[#f7f8fa]">
       <main className="mx-auto max-w-3xl px-0 py-0 sm:px-4 sm:py-8">
         <h1 className="hidden sm:mb-4 sm:block sm:text-2xl sm:font-bold sm:text-[#001e43]">
           {isEditMode ? "ディールを編集する" : "ディールを投稿する"}
@@ -1100,7 +1107,7 @@ function PostPageContent() {
                   : "border-slate-300"
               } focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43] sm:rounded sm:text-sm`}
               rows={5}
-              placeholder="価格情報、クーポン、サイズ感、注意点などを入力してください。"
+              placeholder="このアイテムはおトク？あなたの意見を教えてください！"
               value={comment}
               onChange={(e) => {
                 setComment(e.target.value);
@@ -1229,13 +1236,13 @@ function PostPageContent() {
 
             <div>
               <label className="block text-sm font-semibold text-slate-800">
-                有効期限
+                セール終了日時
               </label>
               <div className="relative mt-1.5">
                 <input
                   type="text"
                   inputMode="numeric"
-                  placeholder="MM/DD/YYYY HH:mm"
+                  placeholder="例：2026/09/19 23:59"
                   className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 pr-12 text-[15px] text-slate-900 focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43] sm:h-auto sm:rounded sm:py-2 sm:text-sm"
                   value={expiresAt}
                   onChange={(e) => setExpiresAt(e.target.value)}
@@ -1268,7 +1275,7 @@ function PostPageContent() {
                 <input
                   ref={expiresAtPickerRef}
                   type="datetime-local"
-                  lang="en-US"
+                  lang="ja-JP"
                   tabIndex={-1}
                   aria-hidden="true"
                   className="pointer-events-none absolute bottom-0 right-0 h-px w-px opacity-0"
@@ -1344,7 +1351,7 @@ function PostPageContent() {
                   }
                 }}
                 disabled={isLoading || isEditLoading}
-                className="mb-2 inline-flex h-12 w-full items-center justify-center rounded-md border border-slate-300 bg-white px-5 text-[15px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 sm:mb-0 sm:mr-2 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm"
+                className="mb-2 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white px-5 text-[15px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:mb-0 sm:mr-2 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm"
               >
                 キャンセル
               </button>
@@ -1353,7 +1360,7 @@ function PostPageContent() {
             <button
               type="submit"
               disabled={isLoading || isEditLoading}
-              className="inline-flex h-12 w-full items-center justify-center rounded-md bg-[#001e43] px-5 text-[15px] font-semibold text-white hover:bg-[#002b66] disabled:opacity-60 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm cursor-pointer"
+              className="inline-flex h-12 w-full items-center justify-center rounded-md bg-[#001e43] px-5 text-[15px] font-semibold text-white hover:bg-[#002b66] cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm"
             >
               {isLoading
                 ? isEditMode

@@ -30,6 +30,7 @@ type DealsRow = {
   expires_at?: string | null;
 
   author_username?: string | null;
+  author_avatar_url?: string | null;
   has_liked?: boolean | null;
   has_disliked?: boolean | null;
   dislikes_count?: number | null;
@@ -40,6 +41,7 @@ type DealsRow = {
 type ProfileRow = {
   id: string;
   username: string | null;
+  avatar_url: string | null;
 };
 
 type SidebarRpcRow = {
@@ -983,6 +985,34 @@ function CheckboxFilter({
   );
 }
 
+function formatDealPostedAt(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfPostedDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dayDiff = Math.round(
+    (startOfToday.getTime() - startOfPostedDay.getTime()) / 86_400_000
+  );
+  const time = date.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  if (dayDiff === 0) return `今日 ${time}`;
+  if (dayDiff === 1) return `昨日 ${time}`;
+
+  return date.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 function PageContent() {
   const searchParams = useSearchParams();
   const q = searchParams.get("q") ?? "";
@@ -1293,10 +1323,11 @@ function PageContent() {
     );
 
     let usernameMap: Record<string, string | null> = {};
+    let avatarMap: Record<string, string | null> = {};
     if (userIds.length > 0) {
       const { data: profilesData, error: profilesError } = await supabase
         .from("profiles")
-        .select("id, username")
+        .select("id, username, avatar_url")
         .in("id", userIds);
 
       if (profilesError) {
@@ -1304,6 +1335,9 @@ function PageContent() {
       } else {
         usernameMap = Object.fromEntries(
           (profilesData ?? []).map((p: ProfileRow) => [p.id, p.username])
+        );
+        avatarMap = Object.fromEntries(
+          (profilesData ?? []).map((p: ProfileRow) => [p.id, p.avatar_url])
         );
       }
     }
@@ -1328,6 +1362,7 @@ function PageContent() {
       free_shipping: row.free_shipping ?? false,
       expires_at: row.expires_at ?? null,
       author_username: row.user_id ? usernameMap[row.user_id] ?? null : null,
+      author_avatar_url: row.user_id ? avatarMap[row.user_id] ?? null : null,
     })) as DealsRow[];
   }, []);
 
@@ -3271,14 +3306,8 @@ function PageContent() {
                   const cardData = {
                     id: row.id,
                     user: row.author_username ?? "匿名ユーザー",
-                    avatar:
-                      "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&crop=faces&auto=format",
-                    time: new Date(row.created_at).toLocaleString("ja-JP", {
-                      month: "2-digit",
-                      day: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    }),
+                    avatar: row.author_avatar_url || "/tokumikke_logo.png",
+                    time: formatDealPostedAt(row.created_at),
                     title: row.title ?? "タイトル未設定",
                     price: row.price ?? 0,
                     orig: row.orig_price ?? undefined,
@@ -3323,14 +3352,8 @@ function PageContent() {
                 const cardData = {
                   id: row.id,
                   user: row.author_username ?? "匿名ユーザー",
-                  avatar:
-                    "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&crop=faces&auto=format",
-                  time: new Date(row.created_at).toLocaleString("ja-JP", {
-                    month: "2-digit",
-                    day: "2-digit",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  }),
+                  avatar: row.author_avatar_url || "/tokumikke_logo.png",
+                  time: formatDealPostedAt(row.created_at),
                   title: row.title ?? "タイトル未設定",
                   price: row.price ?? 0,
                   orig: row.orig_price ?? undefined,
@@ -3463,11 +3486,12 @@ function PageContent() {
                 />
 
                 <div
-                  className="overflow-hidden py-2"
+                  className="relative"
                   style={{ width: rowCardsWidth }}
                 >
-                  <div
-                    className="flex gap-3 transition-transform duration-500 ease-out"
+                  <div className="overflow-hidden py-2">
+                    <div
+                      className="flex gap-3 transition-transform duration-500 ease-out"
                     style={{
                       transform: `translateX(-${recommendTranslateX}px)`,
                     }}
@@ -3476,14 +3500,8 @@ function PageContent() {
                       const cardData = {
                         id: row.id,
                         user: row.author_username ?? "匿名ユーザー",
-                        avatar:
-                          "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&crop=faces&auto=format",
-                        time: new Date(row.created_at).toLocaleString("ja-JP", {
-                          month: "2-digit",
-                          day: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }),
+                        avatar: row.author_avatar_url || "/tokumikke_logo.png",
+                        time: formatDealPostedAt(row.created_at),
                         title: row.title ?? "タイトル未設定",
                         price: row.price ?? 0,
                         orig: row.orig_price ?? undefined,
@@ -3521,7 +3539,15 @@ function PageContent() {
                         </div>
                       );
                     })}
+                    </div>
                   </div>
+
+                  {currentPage < recommendTotalPages - 1 ? (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-y-2 right-0 z-10 w-20 bg-gradient-to-r from-transparent to-white"
+                    />
+                  ) : null}
                 </div>
 
                 <div className="mt-8">
@@ -3539,14 +3565,8 @@ function PageContent() {
                       const cardData = {
                         id: row.id,
                         user: row.author_username ?? "匿名ユーザー",
-                        avatar:
-                          "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=80&h=80&crop=faces&auto=format",
-                        time: new Date(row.created_at).toLocaleString("ja-JP", {
-                          month: "2-digit",
-                          day: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }),
+                        avatar: row.author_avatar_url || "/tokumikke_logo.png",
+                        time: formatDealPostedAt(row.created_at),
                         title: row.title ?? "タイトル未設定",
                         price: row.price ?? 0,
                         orig: row.orig_price ?? undefined,

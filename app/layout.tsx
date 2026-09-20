@@ -20,7 +20,7 @@ const websiteStructuredData = {
   "@context": "https://schema.org",
   "@type": "WebSite",
   name: "トクミッケ",
-  url: "https://outfitdeals.vercel.app/",
+  url: "https://www.tokumikke.com/",
 };
 
 export const metadata: Metadata = {
