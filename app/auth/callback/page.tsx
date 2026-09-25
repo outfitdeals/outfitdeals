@@ -28,10 +28,13 @@ export default function AuthCallbackPage() {
       }
 
       const user = data.session.user;
+      const meta = user.user_metadata || {};
+      const providerAvatar =
+        meta.avatar_url || meta.avatarUrl || meta.picture || null;
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("username")
+        .select("username, avatar_url")
         .eq("id", user.id)
         .maybeSingle();
 
@@ -44,12 +47,29 @@ export default function AuthCallbackPage() {
         return;
       }
 
+      // OAuthプロバイダー側にアバターがあり、profiles側が空の場合は自動補完する。
+      // 既存ユーザーが自分で設定したavatar_urlは上書きしない。
+      if (profile && !profile.avatar_url && providerAvatar) {
+        const { error: avatarSyncError } = await supabase
+          .from("profiles")
+          .update({
+            avatar_url: providerAvatar,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", user.id);
+
+        if (avatarSyncError) {
+          console.error("OAuth avatar sync error:", avatarSyncError);
+        }
+      }
+
       if (!profile?.username) {
         if (consentAt) {
           sessionStorage.setItem(CONSENT_KEY, consentAt);
         } else {
           sessionStorage.removeItem(CONSENT_KEY);
         }
+
         router.replace("/auth/setup-profile");
         return;
       }

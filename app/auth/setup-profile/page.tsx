@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import { useRouter } from "next/navigation";
+
 import { supabase } from "@/lib/supabaseClient";
 
 const CONSENT_KEY = "tokumikke_oauth_signup_consent";
 
 export default function SetupProfilePage() {
   const router = useRouter();
+
   const [username, setUsername] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   const [consentAt, setConsentAt] = useState<string | null>(null);
@@ -23,6 +26,7 @@ export default function SetupProfilePage() {
 
     const load = async () => {
       const { data, error } = await supabase.auth.getUser();
+
       if (cancelled) return;
 
       if (error || !data.user) {
@@ -54,11 +58,13 @@ export default function SetupProfilePage() {
       }
 
       const meta = (data.user as any).user_metadata || {};
+
       const providerAvatar =
         meta.avatar_url || meta.avatarUrl || meta.picture || null;
 
       const alreadyAccepted =
-        Boolean(profile?.terms_accepted_at) && Boolean(profile?.privacy_accepted_at);
+        Boolean(profile?.terms_accepted_at) &&
+        Boolean(profile?.privacy_accepted_at);
 
       setUserId(data.user.id);
       setConsentAt(pendingConsent);
@@ -80,7 +86,9 @@ export default function SetupProfilePage() {
     setMessage(null);
 
     if (!userId) {
-      setMessage("登録情報を確認できませんでした。もう一度ログインからお試しください。");
+      setMessage(
+        "登録情報を確認できませんでした。もう一度ログインからお試しください。"
+      );
       return;
     }
 
@@ -90,7 +98,6 @@ export default function SetupProfilePage() {
     }
 
     const acceptedAt = consentAt || new Date().toISOString();
-
     const trimmed = username.trim();
 
     if (trimmed.length < 2 || trimmed.length > 20) {
@@ -99,6 +106,7 @@ export default function SetupProfilePage() {
     }
 
     const allowed = /^[\p{L}\p{N}_\-ぁ-んァ-ヶ一-龠ー]+$/u;
+
     if (!allowed.test(trimmed)) {
       setMessage("ユーザー名には英数字・日本語・「_」「-」のみ使用できます。");
       return;
@@ -147,7 +155,9 @@ export default function SetupProfilePage() {
     <main className="flex items-start justify-center bg-[#f7f8fa] px-4 pb-24 pt-8 md:min-h-[calc(100dvh-104px)] md:pb-8">
       <div className="w-full max-w-md space-y-5 rounded-xl bg-white p-6 shadow">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">ユーザー名を設定</h1>
+          <h1 className="text-xl font-semibold text-slate-900">
+            ユーザー名を設定
+          </h1>
           <p className="mt-2 text-sm leading-6 text-slate-600">
             トクミッケで表示するユーザー名を設定してください。
           </p>
@@ -163,15 +173,32 @@ export default function SetupProfilePage() {
                 className="mt-1 h-4 w-4 cursor-pointer accent-[#006888]"
               />
               <span>
-                <a href="/terms" target="_blank" rel="noreferrer" className="font-semibold text-[#006888] hover:underline">利用規約</a>
+                <a
+                  href="/terms"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="cursor-pointer font-semibold text-[#006888] hover:underline"
+                >
+                  利用規約
+                </a>
                 および
-                <a href="/privacy" target="_blank" rel="noreferrer" className="font-semibold text-[#006888] hover:underline">プライバシーポリシー</a>
+                <a
+                  href="/privacy"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="cursor-pointer font-semibold text-[#006888] hover:underline"
+                >
+                  プライバシーポリシー
+                </a>
                 に同意します。
               </span>
             </label>
           ) : null}
+
           <div>
-            <label className="mb-1 block text-sm text-slate-700">ユーザー名</label>
+            <label className="mb-1 block text-sm text-slate-700">
+              ユーザー名
+            </label>
             <input
               type="text"
               value={username}
@@ -182,7 +209,9 @@ export default function SetupProfilePage() {
               autoFocus
               required
               onInvalid={(e) =>
-                e.currentTarget.setCustomValidity("ユーザー名を入力してください。")
+                e.currentTarget.setCustomValidity(
+                  "ユーザー名を入力してください。"
+                )
               }
               onInput={(e) => e.currentTarget.setCustomValidity("")}
             />
@@ -190,7 +219,7 @@ export default function SetupProfilePage() {
               コメントなどに表示される名前です。（2〜20文字）
             </p>
             <p className="mt-1 text-xs font-semibold text-amber-700">
-              ※ ユーザー名は登録後に変更できません。登録前に入力内容をご確認ください。
+              ※ ユーザー名は登録後も変更できます。変更後90日間は再変更できません。
             </p>
           </div>
 
@@ -204,7 +233,9 @@ export default function SetupProfilePage() {
         </form>
 
         {message ? (
-          <p className="text-xs leading-5 text-red-600 whitespace-pre-line">{message}</p>
+          <p className="whitespace-pre-line text-xs leading-5 text-red-600">
+            {message}
+          </p>
         ) : null}
       </div>
     </main>

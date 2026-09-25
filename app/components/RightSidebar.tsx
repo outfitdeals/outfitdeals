@@ -12,6 +12,7 @@ export type SidebarDeal = {
   price: number;
   market: string;
   imageUrl?: string | null;
+  detailUrl?: string;
   likes?: number;
   comments?: number;
   isLiked?: boolean;
@@ -26,21 +27,16 @@ type Props = {
   trending?: SidebarDeal[];
   /** まもなく終了 */
   endingSoon?: SidebarDeal[];
-
   /** いいね（任意） */
   onLike?: (id: string) => void;
   /** シェア（任意） */
   onShare?: (id: string) => void;
-
   /** 既存の呼び出し側との互換性のため残す */
   canLike?: boolean;
-
   /** topページで見た目を合わせたいとき用 */
   className?: string;
-
   /** ランキング番号を出す（デフォルト false） */
   showRank?: boolean;
-
   /** サムネが無い時のプレースホルダー */
   placeholderImg?: string;
 };
@@ -83,6 +79,7 @@ export default function RightSidebar({
         {items.map((d, idx) => {
           const likeDisabled = !onLike;
           const isLiked = d.isLiked === true;
+          const detailUrl = d.detailUrl ?? `/deals/${d.id}`;
 
           return (
             <li
@@ -96,8 +93,8 @@ export default function RightSidebar({
               ) : null}
 
               <Link
-                href={`/deals/${d.id}`}
-                className="h-20 w-20 flex-none overflow-hidden rounded-md bg-white ring-1 ring-slate-200"
+                href={detailUrl}
+                className="h-20 w-20 flex-none cursor-pointer overflow-hidden rounded-md bg-white ring-1 ring-slate-200"
                 title="詳細を見る"
               >
                 <img
@@ -111,8 +108,8 @@ export default function RightSidebar({
 
               <div className="min-w-0 flex-1">
                 <Link
-                  href={`/deals/${d.id}`}
-                  className="block text-[12px] text-slate-800 hover:underline"
+                  href={detailUrl}
+                  className="block cursor-pointer text-[12px] text-slate-800 hover:underline"
                   style={clampStyle}
                 >
                   {d.title}
@@ -151,7 +148,7 @@ export default function RightSidebar({
                   </button>
 
                   <Link
-                    href={`/deals/${d.id}#comments`}
+                    href={`${detailUrl}#comments`}
                     className={
                       d.isCommented
                         ? "inline-flex cursor-pointer items-center gap-1 text-[#006888] hover:text-[#00546d]"
@@ -202,14 +199,16 @@ export default function RightSidebar({
         {renderList(popular)}
       </section>
 
-      <section className="overflow-hidden rounded-lg bg-white shadow-md ring-1 ring-slate-200">
-        <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
-          <h3 className="text-xs font-semibold tracking-wide text-slate-700">
-            人気急上昇中のディール
-          </h3>
-        </div>
-        {renderList(trending)}
-      </section>
+      {trending.length > 0 ? (
+        <section className="overflow-hidden rounded-lg bg-white shadow-md ring-1 ring-slate-200">
+          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+            <h3 className="text-xs font-semibold tracking-wide text-slate-700">
+              人気急上昇中のディール
+            </h3>
+          </div>
+          {renderList(trending)}
+        </section>
+      ) : null}
 
       <section className="overflow-hidden rounded-lg bg-white shadow-md ring-1 ring-slate-200">
         <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">

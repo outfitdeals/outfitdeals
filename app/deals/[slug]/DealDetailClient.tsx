@@ -1,4 +1,4 @@
-// app/deals/[id]/page.tsx
+// app/deals/[slug]/DealDetailClient.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
@@ -21,6 +21,10 @@ import {
   CheckCircle2,
   UserRound,
   Search,
+  Calendar,
+  ArrowUp,
+  MoreHorizontal,
+  X,
 } from "lucide-react";
 
 import RightSidebar, { type SidebarDeal } from "@/app/components/RightSidebar";
@@ -28,8 +32,9 @@ import { MarketTag, yen } from "@/app/components/DealUI";
 import ViewTracker from "@/app/components/ViewTracker";
 import { likeDeal, saveDeal } from "@/lib/dealActions";
 
-type DealRow = {
+export type DealRow = {
   id: string;
+  public_id?: number | null;
   created_at: string;
   title: string | null;
   price: number | null;
@@ -38,6 +43,10 @@ type DealRow = {
   brand: string | null;
   expires_at: string | null;
   market: string | null;
+  market_code?: string | null;
+  shop_id?: string | null;
+  item_id?: string | null;
+  deal_number?: number | null;
   shop_name: string | null;
   deal_url: string | null;
   image_url: string | null;
@@ -60,9 +69,18 @@ type ReplyRow = {
   created_at: string;
   body: string;
   user_id: string | null;
+  author_username?: string | null;
+  author_joined_at?: string | null;
   username?: string | null;
+  avatar_url?: string | null;
+  user_badge?: string | null;
   like_count?: number;
   has_liked?: boolean;
+  reaction_type?: CommentReactionType | null;
+  reaction_counts?: ReactionCounts;
+  user_comment_count?: number;
+  user_total_rating?: number;
+  user_joined_at?: string | null;
 };
 
 type CommentRow = {
@@ -70,22 +88,109 @@ type CommentRow = {
   created_at: string;
   body: string;
   user_id: string | null;
+  author_username?: string | null;
+  author_joined_at?: string | null;
   username?: string | null;
+  avatar_url?: string | null;
+  user_badge?: string | null;
   like_count?: number;
   has_liked?: boolean;
+  reaction_type?: CommentReactionType | null;
+  reaction_counts?: ReactionCounts;
+  user_comment_count?: number;
+  user_total_rating?: number;
+  user_joined_at?: string | null;
   replies?: ReplyRow[];
 };
 
 const PLACEHOLDER_IMG = "https://via.placeholder.com/900x900?text=No+Image";
 
-function fmtShort(dt: string) {
+function normalizeDealSlugPart(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._~-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildDealDetailPath(deal: {
+  id: string;
+  public_id?: number | null;
+  shop_id?: string | null;
+  item_id?: string | null;
+}) {
+  const publicId = deal.public_id;
+
+  if (publicId == null) {
+    return `/deals/${deal.id}`;
+  }
+
+  const suffix = [
+    normalizeDealSlugPart(deal.shop_id),
+    normalizeDealSlugPart(deal.item_id),
+  ]
+    .filter(Boolean)
+    .join("-");
+
+  return suffix
+    ? `/deals/${publicId}-${suffix}`
+    : `/deals/${publicId}`;
+}
+
+function fmtDealDateTime(dt: string) {
   try {
-    return new Date(dt).toLocaleString("ja-JP", {
+    const date = new Date(dt);
+    if (Number.isNaN(date.getTime())) return dt;
+
+    const now = new Date();
+
+    const dateParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-    });
+      hour12: false,
+    }).formatToParts(date);
+
+    const nowParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+
+    const getPart = (
+      parts: Intl.DateTimeFormatPart[],
+      type: Intl.DateTimeFormatPartTypes
+    ) => parts.find((part) => part.type === type)?.value ?? "";
+
+    const year = getPart(dateParts, "year");
+    const month = getPart(dateParts, "month");
+    const day = getPart(dateParts, "day");
+    const hour = getPart(dateParts, "hour");
+    const minute = getPart(dateParts, "minute");
+
+    const nowYear = getPart(nowParts, "year");
+    const nowMonth = getPart(nowParts, "month");
+    const nowDay = getPart(nowParts, "day");
+
+    const targetDay = Date.UTC(Number(year), Number(month) - 1, Number(day));
+    const today = Date.UTC(
+      Number(nowYear),
+      Number(nowMonth) - 1,
+      Number(nowDay)
+    );
+    const diffDays = Math.round((today - targetDay) / 86400000);
+    const time = `${hour}:${minute}`;
+
+    if (diffDays === 0) return `今日 ${time}`;
+    if (diffDays === 1) return `昨日 ${time}`;
+
+    return `${year}/${month}/${day} ${time}`;
   } catch {
     return dt;
   }
@@ -94,39 +199,121 @@ function fmtShort(dt: string) {
 function fmtCommentDateTime(dt: string) {
   try {
     const date = new Date(dt);
+    if (Number.isNaN(date.getTime())) return dt;
+
     const now = new Date();
 
-    const targetDay = new Date(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate()
+    const dateParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
+
+    const nowParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+
+    const getPart = (
+      parts: Intl.DateTimeFormatPart[],
+      type: Intl.DateTimeFormatPartTypes
+    ) => parts.find((part) => part.type === type)?.value ?? "";
+
+    const year = getPart(dateParts, "year");
+    const month = getPart(dateParts, "month");
+    const day = getPart(dateParts, "day");
+    const hour = getPart(dateParts, "hour");
+    const minute = getPart(dateParts, "minute");
+
+    const nowYear = getPart(nowParts, "year");
+    const nowMonth = getPart(nowParts, "month");
+    const nowDay = getPart(nowParts, "day");
+
+    const targetDay = Date.UTC(Number(year), Number(month) - 1, Number(day));
+    const today = Date.UTC(
+      Number(nowYear),
+      Number(nowMonth) - 1,
+      Number(nowDay)
     );
-    const today = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate()
-    );
 
-    const diffDays = Math.round(
-      (today.getTime() - targetDay.getTime()) / 86400000
-    );
+    const diffDays = Math.round((today - targetDay) / 86400000);
+    const time = `${hour}:${minute}`;
 
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const time = `${hours}:${minutes}`;
+    if (diffDays === 0) return `今日 ${time}`;
+    if (diffDays === 1) return `昨日 ${time}`;
 
-    if (diffDays === 0) {
-      return `今日 ${time}`;
-    }
-
-    if (diffDays === 1) {
-      return `昨日 ${time}`;
-    }
-
-    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+    return `${year}年${Number(month)}月${Number(day)}日 ${time}`;
   } catch {
     return dt;
   }
+}
+
+function getCommentPostErrorMessage(error: any) {
+  const message = String(error?.message ?? "");
+  const details = String(error?.details ?? "");
+  const hint = String(error?.hint ?? "");
+  const combined = `${message} ${details} ${hint}`;
+
+  if (combined.includes("EXTERNAL_URL_NOT_ALLOWED")) {
+    return "コメントにはトクミッケ内のURLのみ掲載できます。";
+  }
+
+  if (combined.includes("COMMENT_RATE_LIMIT:")) {
+    const reason = combined
+      .split("COMMENT_RATE_LIMIT:")[1]
+      ?.split(/\n|DETAIL:|HINT:/)[0]
+      ?.trim();
+
+    if (reason?.includes("短時間に投稿できるコメント数の上限に達しました。")) {
+      return "短時間に投稿できるコメント数の上限に達しました。1分ほど時間をおいてからもう一度お試しください。";
+    }
+
+    return (
+      reason ||
+      "短時間に連続して投稿することはできません。少し時間をおいてからもう一度お試しください。"
+    );
+  }
+
+  if (combined.includes("EMPTY_COMMENT")) {
+    return "コメントを入力してください。";
+  }
+
+  if (combined.includes("AUTH_REQUIRED") || combined.includes("INVALID_USER")) {
+    return "コメントするにはログインが必要です。";
+  }
+
+  return "コメントの投稿に失敗しました。もう一度お試しください。";
+}
+
+async function moderateCommentText(text: string) {
+  const response = await fetch("/api/moderate-comment", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+
+  const result = await response.json().catch(() => null);
+
+  if (!response.ok || !result?.ok) {
+    console.error("comment moderation error:", result ?? response.status);
+    throw new Error("COMMENT_MODERATION_UNAVAILABLE");
+  }
+
+  return result.allowed === true;
+}
+
+function getDealVoteScore(
+  deal: Pick<DealRow, "likes_count" | "dislikes_count">
+) {
+  return Number(deal.likes_count ?? 0) - Number(deal.dislikes_count ?? 0);
 }
 
 function getDiscountPercent(price: number | null, origPrice: number | null) {
@@ -155,34 +342,49 @@ function formatDealExpiry(value: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
 
-  return new Intl.DateTimeFormat("ja-JP", {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
     year: "numeric",
-    month: "numeric",
-    day: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(date);
+  }).formatToParts(date);
+
+  const getPart = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  const year = getPart("year");
+  const month = getPart("month");
+  const day = getPart("day");
+  const hour = getPart("hour");
+  const minute = getPart("minute");
+
+  return `${year}/${month}/${day} ${hour}:${minute}`;
 }
 
 function CommentAvatar({
   userId,
   username,
+  avatarUrl,
   size = "normal",
 }: {
   userId: string | null;
   username?: string | null;
+  avatarUrl?: string | null;
   size?: "small" | "normal";
 }) {
-  const publicUrl = userId
+  const storagePublicUrl = userId
     ? supabase.storage.from("avatars").getPublicUrl(`${userId}/avatar.jpg`).data
         .publicUrl
     : null;
+  const publicUrl = avatarUrl?.trim() || storagePublicUrl;
 
   const dimension = size === "small" ? "h-8 w-8" : "h-10 w-10";
   const iconSize = size === "small" ? "h-5 w-5" : "h-6 w-6";
 
-  return (
+  const avatar = (
     <span
       className={`relative inline-flex ${dimension} shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-slate-400 ring-1 ring-slate-200`}
       aria-label={`${username ?? "ユーザー"}のアバター`}
@@ -194,6 +396,7 @@ function CommentAvatar({
           src={publicUrl}
           alt=""
           className="absolute inset-0 h-full w-full object-cover"
+          referrerPolicy="no-referrer"
           onError={(e) => {
             e.currentTarget.style.display = "none";
           }}
@@ -201,11 +404,186 @@ function CommentAvatar({
       ) : null}
     </span>
   );
+
+  return userId ? (
+    <Link
+      href={`/users/${userId}`}
+      className="relative z-10 inline-flex shrink-0 cursor-pointer"
+      aria-label={`${username ?? "ユーザー"}のプロフィールを見る`}
+    >
+      {avatar}
+    </Link>
+  ) : (
+    avatar
+  );
 }
 
-export default function DealDetailPage() {
-  const params = useParams<{ id: string }>();
-  const id = (params?.id as string) ?? "";
+
+
+function UserBadge({ badge }: { badge?: string | null }) {
+  if (badge !== "staff") return null;
+
+  return (
+    <span className="inline-flex shrink-0 items-center rounded bg-[#006888]/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[#006888] ring-1 ring-inset ring-[#006888]/20">
+      スタッフ
+    </span>
+  );
+}
+
+
+type CommentReactionType = "deal" | "helpful" | "funny" | "not_helpful";
+
+type ReactionCounts = Record<CommentReactionType, number>;
+
+const EMPTY_REACTION_COUNTS: ReactionCounts = {
+  deal: 0,
+  helpful: 0,
+  funny: 0,
+  not_helpful: 0,
+};
+
+const POSITIVE_COMMENT_REACTIONS: CommentReactionType[] = [
+  "deal",
+  "helpful",
+  "funny",
+];
+
+const COMMENT_REACTIONS: Array<{
+  type: CommentReactionType;
+  label: string;
+  emoji: string;
+}> = [
+  { type: "deal", label: "おトク！", emoji: "👍" },
+  { type: "helpful", label: "なるほど", emoji: "💡" },
+  { type: "funny", label: "おもしろい", emoji: "😂" },
+  { type: "not_helpful", label: "イマイチ", emoji: "👎" },
+];
+
+function isPositiveCommentReaction(
+  reaction: CommentReactionType | null | undefined
+) {
+  return !!reaction && POSITIVE_COMMENT_REACTIONS.includes(reaction);
+}
+
+function CommentReactionSummary({
+  counts,
+  selected,
+}: {
+  counts?: Partial<ReactionCounts>;
+  selected?: CommentReactionType | null;
+}) {
+  const visible = COMMENT_REACTIONS.filter(
+    (reaction) => Number(counts?.[reaction.type] ?? 0) > 0
+  );
+
+  if (visible.length === 0) {
+    return (
+      <>
+        <ThumbsUp className="h-4 w-4" />
+        <span>0</span>
+      </>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      {visible.map((reaction) => (
+        <span
+          key={reaction.type}
+          className={`inline-flex items-center gap-0.5 ${
+            reaction.type === "deal"
+              ? "text-blue-600"
+              : reaction.type === "not_helpful"
+                ? "text-red-500"
+                : "text-slate-600"
+          } ${selected === reaction.type ? "font-bold" : ""}`}
+          title={reaction.label}
+        >
+          <span className="text-[14px] leading-none">{reaction.emoji}</span>
+          <span>{Number(counts?.[reaction.type] ?? 0)}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function CommentReactionPicker({
+  selected,
+  counts,
+  disabled,
+  onSelect,
+}: {
+  selected?: CommentReactionType | null;
+  counts?: Partial<ReactionCounts>;
+  disabled?: boolean;
+  onSelect: (reaction: CommentReactionType) => void;
+}) {
+  return (
+    <div className="flex items-start gap-1.5 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+      {COMMENT_REACTIONS.map((reaction) => {
+        const active = selected === reaction.type;
+        const count = Number(counts?.[reaction.type] ?? 0);
+
+        return (
+          <button
+            key={reaction.type}
+            type="button"
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect(reaction.type);
+            }}
+            className={`group/reaction flex min-w-[62px] cursor-pointer flex-col items-center rounded-xl px-2 py-1.5 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 ${
+              active ? "bg-slate-100" : ""
+            }`}
+            aria-label={reaction.label}
+            title={reaction.label}
+          >
+            <span
+              className={`flex h-10 w-10 items-center justify-center rounded-full text-[25px] transition group-hover/reaction:scale-110 ${
+                active
+                  ? reaction.type === "deal"
+                    ? "bg-blue-50 ring-2 ring-blue-300"
+                    : reaction.type === "helpful"
+                      ? "bg-amber-50 ring-2 ring-amber-300"
+                      : reaction.type === "funny"
+                        ? "bg-orange-50 ring-2 ring-orange-300"
+                        : "bg-red-50 ring-2 ring-red-300"
+                  : "bg-slate-50"
+              }`}
+            >
+              {reaction.emoji}
+            </span>
+            <span
+              className={`mt-1 whitespace-nowrap text-[10px] font-semibold ${
+                active
+                  ? reaction.type === "deal"
+                    ? "text-blue-600"
+                    : reaction.type === "helpful"
+                      ? "text-amber-600"
+                      : reaction.type === "funny"
+                        ? "text-orange-600"
+                        : "text-red-600"
+                  : "text-slate-600"
+              }`}
+            >
+              {reaction.label}
+            </span>
+            {count > 0 ? (
+              <span className="mt-0.5 text-[10px] leading-none text-slate-400">
+                {count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }) {
+  const params = useParams<{ slug: string }>();
+  const routeKey = typeof params?.slug === "string" ? params.slug : "";
 
   const [viewportWidth, setViewportWidth] = useState<number>(1600);
   const [showStickyMobileCta, setShowStickyMobileCta] = useState(false);
@@ -217,6 +595,7 @@ export default function DealDetailPage() {
   const mobileCommentInputRef = useRef<HTMLTextAreaElement | null>(null);
   const desktopCommentInputRef = useRef<HTMLTextAreaElement | null>(null);
   const shareToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashedCommentHashRef = useRef<string | null>(null);
 
   const [shareCopied, setShareCopied] = useState(false);
   const [mobileCommentComposer, setMobileCommentComposer] = useState<
@@ -226,9 +605,10 @@ export default function DealDetailPage() {
     "top" | "bottom" | null
   >(null);
   const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [myProfileUsername, setMyProfileUsername] = useState<string | null>(null);
 
-  const [deal, setDeal] = useState<DealRow | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [deal, setDeal] = useState<DealRow | null>(initialDeal);
+  const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [comments, setComments] = useState<CommentRow[]>([]);
@@ -247,8 +627,17 @@ export default function DealDetailPage() {
     Record<string, boolean>
   >({});
   const [replySubmittingId, setReplySubmittingId] = useState<string | null>(null);
+  const [replyErrors, setReplyErrors] = useState<Record<string, string | null>>({});
   const [commentLikingId, setCommentLikingId] = useState<string | null>(null);
   const [replyLikingId, setReplyLikingId] = useState<string | null>(null);
+  const [reactionPickerKey, setReactionPickerKey] = useState<string | null>(null);
+  const [reportMenuKey, setReportMenuKey] = useState<string | null>(null);
+  const [reportTarget, setReportTarget] = useState<{ type: "comment" | "reply"; id: string } | null>(null);
+  const [reportReason, setReportReason] = useState<"harassment" | "sexual" | "spam" | "other" | "">("");
+  const [reportDetails, setReportDetails] = useState("");
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportSuccess, setReportSuccess] = useState(false);
 
   const [popular, setPopular] = useState<SidebarDeal[]>([]);
   const [trending, setTrending] = useState<SidebarDeal[]>([]);
@@ -262,8 +651,6 @@ export default function DealDetailPage() {
   const [openDealDetails, setOpenDealDetails] = useState(true);
   const [productDetailsExpanded, setProductDetailsExpanded] = useState(false);
   const [openPosterNote, setOpenPosterNote] = useState(true);
-  const [openProductInfo, setOpenProductInfo] = useState(false);
-  const [openAboutPoster, setOpenAboutPoster] = useState(false);
 
   useEffect(() => {
     function handleResize() {
@@ -301,7 +688,7 @@ export default function DealDetailPage() {
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [id]);
+  }, [routeKey]);
 
   useEffect(() => {
     return () => {
@@ -310,6 +697,17 @@ export default function DealDetailPage() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!reactionPickerKey) return;
+
+    const closePicker = () => setReactionPickerKey(null);
+    document.addEventListener("click", closePicker);
+
+    return () => {
+      document.removeEventListener("click", closePicker);
+    };
+  }, [reactionPickerKey]);
 
   const isMobile = viewportWidth < 768;
 
@@ -383,17 +781,40 @@ export default function DealDetailPage() {
     };
   }, [isMobile, showStickyDesktopCta]);
 
-  const myDisplayName = useMemo(() => {
-    const u = currentUser;
-    if (!u) return null;
-    const meta = u.user_metadata ?? {};
-    return (
-      meta.username ??
-      meta.full_name ??
-      meta.name ??
-      (u.email ? u.email.split("@")[0] : null)
-    );
-  }, [currentUser]);
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!currentUser?.id) {
+      setMyProfileUsername(null);
+      return;
+    }
+
+    supabase
+      .from("profiles")
+      .select("username")
+      .eq("id", currentUser.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+
+        if (error) {
+          console.warn("load my profile username warn:", error);
+          setMyProfileUsername(null);
+          return;
+        }
+
+        setMyProfileUsername(data?.username?.trim() || null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
+  const myDisplayName = useMemo(
+    () => myProfileUsername ?? null,
+    [myProfileUsername]
+  );
 
   const discountPercent = useMemo(() => {
     if (!deal) return null;
@@ -556,59 +977,25 @@ export default function DealDetailPage() {
   );
 
   useEffect(() => {
-    if (!id) return;
+    if (!routeKey || !initialDeal?.id) return;
+
+    let cancelled = false;
 
     (async () => {
-      setLoading(true);
-      setErrorMsg(null);
+      // The Server Component already supplied the deal itself, so do not
+      // blank the page and fetch the same row again on first paint.
+      const withFlags = await attachHasLikedAndSaved([initialDeal]);
+      if (cancelled) return;
 
-      const { data, error } = await supabase
-        .from("deals")
-        .select(
-          "id, created_at, title, price, orig_price, free_shipping, brand, expires_at, market, shop_name, deal_url, image_url, comment, item_description, is_expired, likes_count, comments_count, user_id"
-        )
-        .eq("id", id)
-        .maybeSingle();
-
-      if (error) {
-        console.error("deal detail load error:", error);
-        setErrorMsg("ディールの取得に失敗しました。");
-        setDeal(null);
-        setLoading(false);
-        return;
-      }
-
-      if (!data) {
-        setErrorMsg("ディールが見つかりませんでした。");
-        setDeal(null);
-        setLoading(false);
-        return;
-      }
-
-      let author_username: string | null = null;
-      if ((data as any).user_id) {
-        const { data: p, error: pe } = await supabase
-          .from("profiles")
-          .select("username")
-          .eq("id", (data as any).user_id)
-          .maybeSingle();
-
-        if (!pe) author_username = p?.username ?? null;
-      }
-
-      let row: DealRow = {
-        ...(data as any),
-        id: String((data as any).id),
-        author_username,
-      };
-
-      const withFlags = await attachHasLikedAndSaved([row]);
-      row = withFlags[0] ?? row;
-
-      setDeal(row);
+      setDeal(withFlags[0] ?? initialDeal);
       setLoading(false);
+      setErrorMsg(null);
     })();
-  }, [id, attachHasLikedAndSaved]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routeKey, initialDeal, attachHasLikedAndSaved]);
 
   const loadSide = useCallback(async () => {
     setLoadingSide(true);
@@ -675,16 +1062,40 @@ export default function DealDetailPage() {
     );
 
     if (allIds.length > 0) {
-      const { data: allLikeRows, error: allLikesError } = await supabase
-        .from("deal_likes")
-        .select("deal_id, user_id")
-        .in("deal_id", allIds);
+      const [
+        { data: allLikeRows, error: allLikesError },
+        { data: allDislikeRows, error: allDislikesError },
+        { data: routeRows, error: routeError },
+      ] = await Promise.all([
+        supabase
+          .from("deal_likes")
+          .select("deal_id, user_id")
+          .in("deal_id", allIds),
+        supabase
+          .from("deal_dislikes")
+          .select("deal_id, user_id")
+          .in("deal_id", allIds),
+        supabase
+          .from("deals")
+          .select("id, public_id, shop_id, item_id")
+          .in("id", allIds),
+      ]);
 
       if (allLikesError) {
         console.warn("sidebar like count warn:", allLikesError);
       }
+      if (allDislikesError) {
+        console.warn("sidebar dislike count warn:", allDislikesError);
+      }
+      if (routeError) {
+        console.warn("sidebar route info warn:", routeError);
+      }
 
+      const routeById = new Map<string, any>(
+        (routeRows ?? []).map((row: any) => [String(row.id), row])
+      );
       const likeCountMap = new Map<string, number>();
+      const dislikeCountMap = new Map<string, number>();
       const likedSet = new Set<string>();
 
       (allLikeRows ?? []).forEach((row: any) => {
@@ -694,6 +1105,11 @@ export default function DealDetailPage() {
         if (currentUser && row.user_id === currentUser.id) {
           likedSet.add(dealId);
         }
+      });
+
+      (allDislikeRows ?? []).forEach((row: any) => {
+        const dealId = String(row.deal_id);
+        dislikeCountMap.set(dealId, (dislikeCountMap.get(dealId) ?? 0) + 1);
       });
 
       let savedSet = new Set<string>();
@@ -722,7 +1138,8 @@ export default function DealDetailPage() {
         await supabase
           .from("deal_comments")
           .select("id, deal_id, user_id")
-          .in("deal_id", allIds);
+          .in("deal_id", allIds)
+          .eq("moderation_status", "visible");
 
       if (sidebarCommentError) {
         console.warn("sidebar comment-state warn:", sidebarCommentError);
@@ -749,7 +1166,8 @@ export default function DealDetailPage() {
             await supabase
               .from("deal_comment_replies")
               .select("comment_id, user_id")
-              .in("comment_id", commentIds);
+              .in("comment_id", commentIds)
+              .eq("moderation_status", "visible");
 
           if (sidebarReplyError) {
             console.warn("sidebar reply-state warn:", sidebarReplyError);
@@ -771,14 +1189,27 @@ export default function DealDetailPage() {
         }
       }
 
-      const patchSidebarDeal = (r: SidebarDeal): SidebarDeal => ({
-        ...r,
-        likes: likeCountMap.get(r.id) ?? 0,
-        comments: commentCountMap.get(r.id) ?? 0,
-        isLiked: likedSet.has(r.id),
-        isSaved: savedSet.has(r.id),
-        isCommented: commentedSet.has(r.id),
-      });
+      const patchSidebarDeal = (r: SidebarDeal): SidebarDeal => {
+        const routeRow = routeById.get(r.id);
+
+        return {
+          ...r,
+          detailUrl: routeRow
+            ? buildDealDetailPath({
+                id: r.id,
+                public_id: routeRow.public_id ?? null,
+                shop_id: routeRow.shop_id ?? null,
+                item_id: routeRow.item_id ?? null,
+              })
+            : `/deals/${r.id}`,
+          likes:
+            (likeCountMap.get(r.id) ?? 0) - (dislikeCountMap.get(r.id) ?? 0),
+          comments: commentCountMap.get(r.id) ?? 0,
+          isLiked: likedSet.has(r.id),
+          isSaved: savedSet.has(r.id),
+          isCommented: commentedSet.has(r.id),
+        };
+      };
 
       popularDeals = popularDeals.map(patchSidebarDeal);
       trendingDeals = trendingDeals.map(patchSidebarDeal);
@@ -796,12 +1227,13 @@ export default function DealDetailPage() {
   }, [loadSide]);
 
   const loadComments = useCallback(async () => {
-    if (!id) return;
+    if (!deal?.id) return;
 
     const { data: commentData, error: commentErrorRes } = await supabase
       .from("deal_comments")
-      .select("id, body, created_at, user_id")
-      .eq("deal_id", id)
+      .select("id, body, created_at, user_id, author_username, author_joined_at")
+      .eq("deal_id", deal.id)
+      .eq("moderation_status", "visible")
       .order("created_at", { ascending: true });
 
     if (commentErrorRes) {
@@ -820,8 +1252,9 @@ export default function DealDetailPage() {
     const { data: replyData, error: replyError } = commentIds.length
       ? await supabase
           .from("deal_comment_replies")
-          .select("id, comment_id, body, created_at, user_id")
+          .select("id, comment_id, body, created_at, user_id, author_username, author_joined_at")
           .in("comment_id", commentIds)
+          .eq("moderation_status", "visible")
           .order("created_at", { ascending: true })
       : { data: [], error: null as any };
 
@@ -837,23 +1270,141 @@ export default function DealDetailPage() {
     const allUserIds = Array.from(new Set([...commentUserIds, ...replyUserIds]));
 
     let usernameMap: Record<string, string | null> = {};
+    let avatarUrlMap: Record<string, string | null> = {};
+    let joinedAtMap: Record<string, string | null> = {};
+    let userBadgeMap: Record<string, string | null> = {};
     if (allUserIds.length > 0) {
       const { data: profs, error: pe } = await supabase
         .from("profiles")
-        .select("id, username")
+        .select("id, username, avatar_url, created_at, user_badge")
         .in("id", allUserIds);
 
       if (!pe) {
         usernameMap = Object.fromEntries(
           (profs ?? []).map((p: any) => [String(p.id), p.username ?? null])
         );
+        avatarUrlMap = Object.fromEntries(
+          (profs ?? []).map((p: any) => [String(p.id), p.avatar_url ?? null])
+        );
+        joinedAtMap = Object.fromEntries(
+          (profs ?? []).map((p: any) => [String(p.id), p.created_at ?? null])
+        );
+        userBadgeMap = Object.fromEntries(
+          (profs ?? []).map((p: any) => [String(p.id), p.user_badge ?? null])
+        );
       }
+    }
+
+    const userCommentCountMap: Record<string, number> = {};
+    const userTotalRatingMap: Record<string, number> = {};
+
+    if (allUserIds.length > 0) {
+      const [
+        { data: authoredComments, error: authoredCommentsError },
+        { data: authoredReplies, error: authoredRepliesError },
+        { data: authoredDeals, error: authoredDealsError },
+      ] = await Promise.all([
+        supabase
+          .from("deal_comments")
+          .select("id, user_id")
+          .in("user_id", allUserIds)
+          .eq("moderation_status", "visible"),
+        supabase
+          .from("deal_comment_replies")
+          .select("id, user_id")
+          .in("user_id", allUserIds)
+          .eq("moderation_status", "visible"),
+        supabase
+          .from("deals")
+          .select("user_id, likes_count")
+          .in("user_id", allUserIds),
+      ]);
+
+      if (authoredCommentsError) {
+        console.warn("load commenter comment counts warn:", authoredCommentsError);
+      }
+      if (authoredRepliesError) {
+        console.warn("load commenter reply counts warn:", authoredRepliesError);
+      }
+      if (authoredDealsError) {
+        console.warn("load commenter deal likes warn:", authoredDealsError);
+      }
+
+      const authoredCommentOwnerMap: Record<string, string> = {};
+      const authoredReplyOwnerMap: Record<string, string> = {};
+
+      (authoredComments ?? []).forEach((row: any) => {
+        if (!row.user_id) return;
+        const uid = String(row.user_id);
+        const cid = String(row.id);
+        authoredCommentOwnerMap[cid] = uid;
+        userCommentCountMap[uid] = (userCommentCountMap[uid] ?? 0) + 1;
+      });
+
+      (authoredReplies ?? []).forEach((row: any) => {
+        if (!row.user_id) return;
+        const uid = String(row.user_id);
+        const rid = String(row.id);
+        authoredReplyOwnerMap[rid] = uid;
+        userCommentCountMap[uid] = (userCommentCountMap[uid] ?? 0) + 1;
+      });
+
+      (authoredDeals ?? []).forEach((row: any) => {
+        if (!row.user_id) return;
+        const uid = String(row.user_id);
+        userTotalRatingMap[uid] =
+          (userTotalRatingMap[uid] ?? 0) + Number(row.likes_count ?? 0);
+      });
+
+      const authoredCommentIds = Object.keys(authoredCommentOwnerMap);
+      const authoredReplyIds = Object.keys(authoredReplyOwnerMap);
+
+      const [
+        { data: receivedCommentLikes, error: receivedCommentLikesError },
+        { data: receivedReplyLikes, error: receivedReplyLikesError },
+      ] = await Promise.all([
+        authoredCommentIds.length
+          ? supabase
+              .from("deal_comment_likes")
+              .select("comment_id")
+              .in("comment_id", authoredCommentIds)
+          : Promise.resolve({ data: [], error: null as any }),
+        authoredReplyIds.length
+          ? supabase
+              .from("deal_comment_reply_likes")
+              .select("reply_id")
+              .in("reply_id", authoredReplyIds)
+          : Promise.resolve({ data: [], error: null as any }),
+      ]);
+
+      if (receivedCommentLikesError) {
+        console.warn("load commenter received comment likes warn:", receivedCommentLikesError);
+      }
+      if (receivedReplyLikesError) {
+        console.warn("load commenter received reply likes warn:", receivedReplyLikesError);
+      }
+
+      (receivedCommentLikes ?? []).forEach((row: any) => {
+        const reaction = (row.reaction_type ?? "deal") as CommentReactionType;
+        if (!isPositiveCommentReaction(reaction)) return;
+        const uid = authoredCommentOwnerMap[String(row.comment_id)];
+        if (!uid) return;
+        userTotalRatingMap[uid] = (userTotalRatingMap[uid] ?? 0) + 1;
+      });
+
+      (receivedReplyLikes ?? []).forEach((row: any) => {
+        const reaction = (row.reaction_type ?? "deal") as CommentReactionType;
+        if (!isPositiveCommentReaction(reaction)) return;
+        const uid = authoredReplyOwnerMap[String(row.reply_id)];
+        if (!uid) return;
+        userTotalRatingMap[uid] = (userTotalRatingMap[uid] ?? 0) + 1;
+      });
     }
 
     const { data: likeRows, error: likeRowsError } = commentIds.length
       ? await supabase
           .from("deal_comment_likes")
-          .select("comment_id, user_id")
+          .select("comment_id, user_id, reaction_type")
           .in("comment_id", commentIds)
       : { data: [], error: null as any };
 
@@ -862,13 +1413,25 @@ export default function DealDetailPage() {
     }
 
     const likeCountMap: Record<string, number> = {};
-    const likedByMe = new Set<string>();
+    const commentReactionCountsMap: Record<string, ReactionCounts> = {};
+    const myCommentReactionMap: Record<string, CommentReactionType> = {};
 
     (likeRows ?? []).forEach((row: any) => {
       const cid = String(row.comment_id);
-      likeCountMap[cid] = (likeCountMap[cid] ?? 0) + 1;
+      const reaction = (row.reaction_type ?? "deal") as CommentReactionType;
+
+      if (!commentReactionCountsMap[cid]) {
+        commentReactionCountsMap[cid] = { ...EMPTY_REACTION_COUNTS };
+      }
+      commentReactionCountsMap[cid][reaction] =
+        (commentReactionCountsMap[cid][reaction] ?? 0) + 1;
+
+      if (isPositiveCommentReaction(reaction)) {
+        likeCountMap[cid] = (likeCountMap[cid] ?? 0) + 1;
+      }
+
       if (currentUser && row.user_id === currentUser.id) {
-        likedByMe.add(cid);
+        myCommentReactionMap[cid] = reaction;
       }
     });
 
@@ -877,7 +1440,7 @@ export default function DealDetailPage() {
     const { data: replyLikeRows, error: replyLikeRowsError } = replyIds.length
       ? await supabase
           .from("deal_comment_reply_likes")
-          .select("reply_id, user_id")
+          .select("reply_id, user_id, reaction_type")
           .in("reply_id", replyIds)
       : { data: [], error: null as any };
 
@@ -886,14 +1449,25 @@ export default function DealDetailPage() {
     }
 
     const replyLikeCountMap: Record<string, number> = {};
-    const replyLikedByMe = new Set<string>();
+    const replyReactionCountsMap: Record<string, ReactionCounts> = {};
+    const myReplyReactionMap: Record<string, CommentReactionType> = {};
 
     (replyLikeRows ?? []).forEach((row: any) => {
       const replyId = String(row.reply_id);
-      replyLikeCountMap[replyId] = (replyLikeCountMap[replyId] ?? 0) + 1;
+      const reaction = (row.reaction_type ?? "deal") as CommentReactionType;
+
+      if (!replyReactionCountsMap[replyId]) {
+        replyReactionCountsMap[replyId] = { ...EMPTY_REACTION_COUNTS };
+      }
+      replyReactionCountsMap[replyId][reaction] =
+        (replyReactionCountsMap[replyId][reaction] ?? 0) + 1;
+
+      if (isPositiveCommentReaction(reaction)) {
+        replyLikeCountMap[replyId] = (replyLikeCountMap[replyId] ?? 0) + 1;
+      }
 
       if (currentUser && row.user_id === currentUser.id) {
-        replyLikedByMe.add(replyId);
+        myReplyReactionMap[replyId] = reaction;
       }
     });
 
@@ -902,10 +1476,28 @@ export default function DealDetailPage() {
       const normalizedReply: ReplyRow = {
         ...r,
         username: r.user_id
-          ? usernameMap[String(r.user_id)] ?? "匿名ユーザー"
-          : "匿名ユーザー",
+          ? usernameMap[String(r.user_id)] ?? r.author_username ?? "匿名ユーザー"
+          : r.author_username ?? "匿名ユーザー",
+        avatar_url: r.user_id
+          ? avatarUrlMap[String(r.user_id)] ?? null
+          : null,
+        user_badge: r.user_id
+          ? userBadgeMap[String(r.user_id)] ?? null
+          : null,
         like_count: replyLikeCountMap[String(r.id)] ?? 0,
-        has_liked: replyLikedByMe.has(String(r.id)),
+        has_liked: isPositiveCommentReaction(myReplyReactionMap[String(r.id)]),
+        reaction_type: myReplyReactionMap[String(r.id)] ?? null,
+        reaction_counts:
+          replyReactionCountsMap[String(r.id)] ?? { ...EMPTY_REACTION_COUNTS },
+        user_comment_count: r.user_id
+          ? userCommentCountMap[String(r.user_id)] ?? 0
+          : 0,
+        user_total_rating: r.user_id
+          ? userTotalRatingMap[String(r.user_id)] ?? 0
+          : 0,
+        user_joined_at: r.user_id
+          ? joinedAtMap[String(r.user_id)] ?? r.author_joined_at ?? null
+          : r.author_joined_at ?? null,
       };
 
       if (!repliesByComment[String(r.comment_id)]) {
@@ -917,28 +1509,44 @@ export default function DealDetailPage() {
 
     const normalizedComments = baseComments.map((c) => {
       const nameFromProfiles = c.user_id ? usernameMap[String(c.user_id)] ?? null : null;
-      const name =
-        currentUser && c.user_id === currentUser.id
-          ? myDisplayName ?? nameFromProfiles ?? "匿名ユーザー"
-          : nameFromProfiles ?? "匿名ユーザー";
+      const name = nameFromProfiles ?? c.author_username ?? "匿名ユーザー";
 
       return {
         ...c,
         username: name,
+        avatar_url: c.user_id
+          ? avatarUrlMap[String(c.user_id)] ?? null
+          : null,
+        user_badge: c.user_id
+          ? userBadgeMap[String(c.user_id)] ?? null
+          : null,
         like_count: likeCountMap[String(c.id)] ?? 0,
-        has_liked: likedByMe.has(String(c.id)),
+        has_liked: isPositiveCommentReaction(myCommentReactionMap[String(c.id)]),
+        reaction_type: myCommentReactionMap[String(c.id)] ?? null,
+        reaction_counts:
+          commentReactionCountsMap[String(c.id)] ?? { ...EMPTY_REACTION_COUNTS },
+        user_comment_count: c.user_id
+          ? userCommentCountMap[String(c.user_id)] ?? 0
+          : 0,
+        user_total_rating: c.user_id
+          ? userTotalRatingMap[String(c.user_id)] ?? 0
+          : 0,
+        user_joined_at: c.user_id
+          ? joinedAtMap[String(c.user_id)] ?? c.author_joined_at ?? null
+          : c.author_joined_at ?? null,
         replies: repliesByComment[String(c.id)] ?? [],
       };
     });
 
     setComments(normalizedComments);
-  }, [id, currentUser, myDisplayName]);
+  }, [deal?.id, currentUser, myDisplayName]);
 
   useEffect(() => {
     loadComments();
   }, [loadComments]);
 
   const handleLike = async () => {
+    if (deal.user_id === currentUser?.id) return;
     if (!currentUser) {
       alert("いいね機能を使うには、ログインが必要です。");
       return;
@@ -1091,9 +1699,10 @@ export default function DealDetailPage() {
 
     const sidebarDeal =
       popular.find((item) => item.id === dealId) ??
-      trending.find((item) => item.id === dealId);
+      trending.find((item) => item.id === dealId) ??
+      endingSoon.find((item) => item.id === dealId);
 
-    const url = `${window.location.origin}/deals/${dealId}`;
+    const url = `${window.location.origin}${sidebarDeal?.detailUrl ?? `/deals/${dealId}`}`;
 
     try {
       if (navigator.share) {
@@ -1157,6 +1766,7 @@ export default function DealDetailPage() {
   };
 
   const handleBadDeal = async () => {
+    if (deal.user_id === currentUser?.id) return;
     if (!currentUser) {
       alert("「イマイチ」に投票するには、ログインが必要です。");
       return;
@@ -1283,64 +1893,63 @@ export default function DealDetailPage() {
     });
   };
 
-  const handleCommentLike = async (commentId: string) => {
+  const handleCommentReaction = async (
+    commentId: string,
+    reaction: CommentReactionType
+  ) => {
     if (!currentUser) {
-      alert("コメントにいいねするには、ログインが必要です。");
+      alert("コメントにリアクションするには、ログインが必要です。");
       return;
     }
 
     const target = comments.find((c) => c.id === commentId);
     if (!target || commentLikingId === commentId) return;
+    if (target.user_id === currentUser.id) return;
 
-    const wasLiked = !!target.has_liked;
+    const previous = target.reaction_type ?? null;
+    const next = previous === reaction ? null : reaction;
     setCommentLikingId(commentId);
-
-    setComments((prev) =>
-      prev.map((c) =>
-        c.id === commentId
-          ? {
-              ...c,
-              has_liked: !wasLiked,
-              like_count: Math.max(
-                0,
-                Number(c.like_count ?? 0) + (wasLiked ? -1 : 1)
-              ),
-            }
-          : c
-      )
-    );
+    setReactionPickerKey(null);
 
     try {
-      if (wasLiked) {
+      if (!next) {
         const { error } = await supabase
           .from("deal_comment_likes")
           .delete()
           .eq("comment_id", commentId)
           .eq("user_id", currentUser.id);
-
-        if (error) {
-          console.error("delete comment like error:", error);
-          await loadComments();
-        }
+        if (error) throw error;
       } else {
+        if (previous) {
+          const { error: deleteError } = await supabase
+            .from("deal_comment_likes")
+            .delete()
+            .eq("comment_id", commentId)
+            .eq("user_id", currentUser.id);
+          if (deleteError) throw deleteError;
+        }
+
         const { error } = await supabase.from("deal_comment_likes").insert({
           comment_id: commentId,
           user_id: currentUser.id,
+          reaction_type: next,
         });
-
-        if (error && (error as any).code !== "23505") {
-          console.error("insert comment like error:", error);
-          await loadComments();
-        }
+        if (error) throw error;
       }
+    } catch (error) {
+      console.error("comment reaction error:", error);
     } finally {
+      await loadComments();
       setCommentLikingId(null);
     }
   };
 
-  const handleReplyLike = async (replyId: string) => {
+  const handleReplyReaction = async (
+    replyId: string,
+    reaction: CommentReactionType
+  ) => {
     if (!currentUser) {
-      alert("返信にいいねするには、ログインが必要です。");
+      alert("返信にリアクションするには、ログインが必要です。");
       return;
     }
 
@@ -1349,54 +1958,44 @@ export default function DealDetailPage() {
       .find((reply) => reply.id === replyId);
 
     if (!targetReply || replyLikingId === replyId) return;
+    if (targetReply.user_id === currentUser.id) return;
 
-    const wasLiked = !!targetReply.has_liked;
+    const previous = targetReply.reaction_type ?? null;
+    const next = previous === reaction ? null : reaction;
     setReplyLikingId(replyId);
-
-    setComments((prev) =>
-      prev.map((comment) => ({
-        ...comment,
-        replies: (comment.replies ?? []).map((reply) =>
-          reply.id === replyId
-            ? {
-                ...reply,
-                has_liked: !wasLiked,
-                like_count: Math.max(
-                  0,
-                  Number(reply.like_count ?? 0) + (wasLiked ? -1 : 1)
-                ),
-              }
-            : reply
-        ),
-      }))
-    );
+    setReactionPickerKey(null);
 
     try {
-      if (wasLiked) {
+      if (!next) {
         const { error } = await supabase
           .from("deal_comment_reply_likes")
           .delete()
           .eq("reply_id", replyId)
           .eq("user_id", currentUser.id);
-
-        if (error) {
-          console.error("delete reply like error:", error);
-          await loadComments();
-        }
+        if (error) throw error;
       } else {
+        if (previous) {
+          const { error: deleteError } = await supabase
+            .from("deal_comment_reply_likes")
+            .delete()
+            .eq("reply_id", replyId)
+            .eq("user_id", currentUser.id);
+          if (deleteError) throw deleteError;
+        }
+
         const { error } = await supabase
           .from("deal_comment_reply_likes")
           .insert({
             reply_id: replyId,
             user_id: currentUser.id,
+            reaction_type: next,
           });
-
-        if (error && (error as any).code !== "23505") {
-          console.error("insert reply like error:", error);
-          await loadComments();
-        }
+        if (error) throw error;
       }
+    } catch (error) {
+      console.error("reply reaction error:", error);
     } finally {
+      await loadComments();
       setReplyLikingId(null);
     }
   };
@@ -1433,12 +2032,20 @@ export default function DealDetailPage() {
       ...prev,
       [commentId]: !prev[commentId],
     }));
+    setReplyErrors((prev) => ({
+      ...prev,
+      [commentId]: null,
+    }));
   };
 
   const handleReplyDraftChange = (commentId: string, value: string) => {
     setReplyDrafts((prev) => ({
       ...prev,
       [commentId]: value,
+    }));
+    setReplyErrors((prev) => ({
+      ...prev,
+      [commentId]: null,
     }));
   };
 
@@ -1451,23 +2058,88 @@ export default function DealDetailPage() {
     const body = (replyDrafts[commentId] ?? "").trim();
     if (!body) return;
 
+    setReplyErrors((prev) => ({
+      ...prev,
+      [commentId]: null,
+    }));
     setReplySubmittingId(commentId);
 
     try {
-      const { error } = await supabase.from("deal_comment_replies").insert({
-        comment_id: commentId,
-        user_id: currentUser.id,
-        body,
-      });
+      let allowed = false;
+
+      try {
+        allowed = await moderateCommentText(body);
+      } catch (moderationError) {
+        console.error("reply moderation error:", moderationError);
+        setReplyErrors((prev) => ({
+          ...prev,
+          [commentId]:
+            "コメント内容の確認に失敗しました。少し時間をおいてからもう一度お試しください。",
+        }));
+        return;
+      }
+
+      if (!allowed) {
+        setReplyErrors((prev) => ({
+          ...prev,
+          [commentId]:
+            "コミュニティガイドラインに抵触する可能性があるため、このコメントは投稿できません。",
+        }));
+        return;
+      }
+
+      const { data: insertedReply, error } = await supabase
+        .from("deal_comment_replies")
+        .insert({
+          comment_id: commentId,
+          user_id: currentUser.id,
+          body,
+        })
+        .select("id")
+        .single();
 
       if (error) {
         console.error("insert reply error:", error);
+        setReplyErrors((prev) => ({
+          ...prev,
+          [commentId]: getCommentPostErrorMessage(error),
+        }));
         return;
+      }
+
+      // The database trigger continues to create the in-site notification.
+      // Email delivery is separate so an email failure never prevents the reply.
+      if (insertedReply?.id) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+
+          if (session?.access_token) {
+            const response = await fetch("/api/reply-notification", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: JSON.stringify({ replyId: insertedReply.id }),
+            });
+
+            if (!response.ok) {
+              const result = await response.json().catch(() => null);
+              console.warn("reply email notification warn:", result ?? response.status);
+            }
+          }
+        } catch (emailError) {
+          console.warn("reply email notification warn:", emailError);
+        }
       }
 
       setReplyDrafts((prev) => ({
         ...prev,
         [commentId]: "",
+      }));
+      setReplyErrors((prev) => ({
+        ...prev,
+        [commentId]: null,
       }));
       setReplyOpenMap((prev) => ({
         ...prev,
@@ -1475,6 +2147,12 @@ export default function DealDetailPage() {
       }));
 
       await loadComments();
+
+      // Show the newly posted reply directly under the comment it belongs to.
+      setExpandedReplyThreads((prev) => ({
+        ...prev,
+        [commentId]: true,
+      }));
     } finally {
       setReplySubmittingId(null);
     }
@@ -1491,6 +2169,11 @@ export default function DealDetailPage() {
       return;
     }
 
+    if (!deal?.id) {
+      setCommentError("ディール情報を取得できませんでした。");
+      return;
+    }
+
     const body = commentBody.trim();
     if (!body) {
       setCommentError("コメントを入力してください。");
@@ -1502,10 +2185,29 @@ export default function DealDetailPage() {
     try {
       setCommentLoading(true);
 
+      let allowed = false;
+
+      try {
+        allowed = await moderateCommentText(body);
+      } catch (moderationError) {
+        console.error("comment moderation error:", moderationError);
+        setCommentError(
+          "コメント内容の確認に失敗しました。少し時間をおいてからもう一度お試しください。"
+        );
+        return;
+      }
+
+      if (!allowed) {
+        setCommentError(
+          "コミュニティガイドラインに抵触する可能性があるため、このコメントは投稿できません。"
+        );
+        return;
+      }
+
       const { data, error } = await supabase
         .from("deal_comments")
         .insert({
-          deal_id: id,
+          deal_id: deal.id,
           user_id: currentUser.id,
           body,
         })
@@ -1514,7 +2216,7 @@ export default function DealDetailPage() {
 
       if (error) {
         console.error("insert comment error:", error);
-        setCommentError("コメントの投稿に失敗しました。");
+        setCommentError(getCommentPostErrorMessage(error));
         return;
       }
 
@@ -1540,7 +2242,7 @@ export default function DealDetailPage() {
       const { data: countRow, error: countErr } = await supabase
         .from("deals")
         .select("comments_count")
-        .eq("id", id)
+        .eq("id", deal.id)
         .maybeSingle();
 
       if (!countErr && countRow && typeof (countRow as any).comments_count === "number") {
@@ -1561,8 +2263,7 @@ export default function DealDetailPage() {
   const renderCommunityVoting = (mobile = false) => {
     if (!deal) return null;
 
-    const score =
-      Number(deal.likes_count ?? 0) - Number(deal.dislikes_count ?? 0);
+    const score = getDealVoteScore(deal);
     const scoreLabel = score > 0 ? `+${score}` : String(score);
 
     return (
@@ -1586,15 +2287,15 @@ export default function DealDetailPage() {
         <div
           className={
             mobile
-              ? "mt-4 flex flex-wrap items-center gap-3"
+              ? "mt-4 grid grid-cols-[128px_minmax(0,1fr)_minmax(0,1fr)] items-center gap-x-2 gap-y-4"
               : "mt-5 flex flex-wrap items-center gap-5"
           }
         >
           <div className="inline-flex overflow-hidden rounded-lg border border-amber-200 bg-amber-50">
             <div className="flex items-center bg-amber-100 px-3 py-2 text-center text-[11px] font-semibold leading-tight text-amber-900">
-              Deal
+              おトク
               <br />
-              Score
+              スコア
             </div>
             <div className="flex min-w-[58px] items-center justify-center px-3 text-[20px] font-bold text-slate-800">
               {scoreLabel}
@@ -1605,30 +2306,34 @@ export default function DealDetailPage() {
             type="button"
             onClick={handleLike}
             disabled={liking}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-full text-slate-800 disabled:cursor-wait disabled:opacity-60"
+            className={`inline-flex cursor-pointer items-center gap-2 rounded-full text-slate-800 disabled:cursor-wait disabled:opacity-60 ${
+              mobile ? "w-full min-w-0 justify-center gap-1" : ""
+            }`}
           >
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-300 bg-white">
+            <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white">
               <ThumbsUp
                 className="h-6 w-6 text-[#006888]"
                 fill={deal.has_liked ? "currentColor" : "none"}
               />
             </span>
-            <span className="text-[14px] font-medium">おトク！</span>
+            <span className="whitespace-nowrap text-[14px] font-medium">おトク！</span>
           </button>
 
           <button
             type="button"
             onClick={handleBadDeal}
             disabled={disliking}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-full text-slate-800 disabled:cursor-wait disabled:opacity-60"
+            className={`inline-flex cursor-pointer items-center gap-2 rounded-full text-slate-800 disabled:cursor-wait disabled:opacity-60 ${
+              mobile ? "w-full min-w-0 justify-center gap-1" : ""
+            }`}
           >
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-300 bg-white">
+            <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white">
               <ThumbsDown
                 className="h-6 w-6 text-orange-500"
                 fill={deal.has_disliked ? "currentColor" : "none"}
               />
             </span>
-            <span className="text-[14px] font-medium">イマイチ</span>
+            <span className="whitespace-nowrap text-[14px] font-medium">イマイチ</span>
           </button>
 
           {deal.deal_url ? (
@@ -1638,7 +2343,7 @@ export default function DealDetailPage() {
               rel="noopener noreferrer"
               className={
                 mobile
-                  ? "inline-flex w-full cursor-pointer items-center justify-center rounded-full bg-[#006888] px-5 py-3 text-[16px] font-semibold text-white"
+                  ? "col-span-3 inline-flex w-full cursor-pointer items-center justify-center rounded-full bg-[#006888] px-5 py-3 text-[16px] font-semibold text-white"
                   : "ml-auto inline-flex cursor-pointer items-center justify-center rounded-full bg-[#006888] px-6 py-3 text-[15px] font-semibold text-white hover:bg-[#00546d]"
               }
             >
@@ -1686,23 +2391,45 @@ export default function DealDetailPage() {
 
   const visibleDiscussionItems = useMemo<DiscussionItem[]>(() => {
     const query = commentSearch.trim().toLowerCase();
-
     const items: DiscussionItem[] = [];
 
     comments.forEach((comment) => {
-      items.push({
-        kind: "comment",
-        id: comment.id,
-        created_at: comment.created_at,
-        body: comment.body,
-        username: comment.username,
-        user_id: comment.user_id,
-        like_count: comment.like_count,
-        has_liked: comment.has_liked,
-        comment,
-      });
+      const commentUsername = (comment.username ?? "").toLowerCase();
+      const commentBody = comment.body.toLowerCase();
 
+      if (
+        !query ||
+        commentUsername.includes(query) ||
+        commentBody.includes(query)
+      ) {
+        items.push({
+          kind: "comment",
+          id: comment.id,
+          created_at: comment.created_at,
+          body: comment.body,
+          username: comment.username,
+          user_id: comment.user_id,
+          like_count: comment.like_count,
+          has_liked: comment.has_liked,
+          comment,
+        });
+      }
+
+      // A reply appears in BOTH places by design:
+      // 1) as an independent item in the normal chronological discussion list
+      // 2) inside the original parent comment's reply tree
       (comment.replies ?? []).forEach((reply) => {
+        const replyUsername = (reply.username ?? "").toLowerCase();
+        const replyBody = reply.body.toLowerCase();
+
+        if (
+          query &&
+          !replyUsername.includes(query) &&
+          !replyBody.includes(query)
+        ) {
+          return;
+        }
+
         items.push({
           kind: "reply",
           id: reply.id,
@@ -1718,28 +2445,7 @@ export default function DealDetailPage() {
       });
     });
 
-    const filtered = query
-      ? items.filter((item) => {
-          const username = (item.username ?? "").toLowerCase();
-          const body = item.body.toLowerCase();
-
-          if (item.kind === "reply") {
-            const parentUsername = (item.parent.username ?? "").toLowerCase();
-            const parentBody = item.parent.body.toLowerCase();
-
-            return (
-              username.includes(query) ||
-              body.includes(query) ||
-              parentUsername.includes(query) ||
-              parentBody.includes(query)
-            );
-          }
-
-          return username.includes(query) || body.includes(query);
-        })
-      : items;
-
-    filtered.sort((a, b) => {
+    items.sort((a, b) => {
       const aTime = new Date(a.created_at).getTime();
       const bTime = new Date(b.created_at).getTime();
 
@@ -1759,9 +2465,8 @@ export default function DealDetailPage() {
         : bTime - aTime;
     });
 
-    return filtered;
+    return items;
   }, [comments, commentSearch, commentSort]);
-
   const COMMENTS_PER_PAGE = 15;
 
   const commentTotalPages = Math.max(
@@ -1776,7 +2481,7 @@ export default function DealDetailPage() {
 
   useEffect(() => {
     setCommentPage(1);
-  }, [commentSearch, commentSort, id]);
+  }, [commentSearch, commentSort, routeKey]);
 
   useEffect(() => {
     if (commentPage > commentTotalPages) {
@@ -1826,6 +2531,26 @@ export default function DealDetailPage() {
         behavior: "smooth",
         block: "center",
       });
+
+      if (flashedCommentHashRef.current !== hash) {
+        flashedCommentHashRef.current = hash;
+
+        window.setTimeout(() => {
+          target.animate(
+            [
+              { backgroundColor: "rgba(239, 246, 255, 0)" },
+              { backgroundColor: "rgba(219, 234, 254, 1)" },
+              { backgroundColor: "rgba(239, 246, 255, 0)" },
+              { backgroundColor: "rgba(219, 234, 254, 1)" },
+              { backgroundColor: "rgba(239, 246, 255, 0)" },
+            ],
+            {
+              duration: 2200,
+              easing: "ease-in-out",
+            }
+          );
+        }, 700);
+      }
 
       return true;
     };
@@ -2049,6 +2774,12 @@ export default function DealDetailPage() {
           disabled={!currentUser || replySubmittingId === commentId}
         />
 
+        {replyErrors[commentId] ? (
+          <p className="mt-2 text-sm leading-5 text-red-600" role="alert">
+            {replyErrors[commentId]}
+          </p>
+        ) : null}
+
         <div className="mt-2 flex items-center justify-end gap-2">
           <button
             type="button"
@@ -2075,6 +2806,169 @@ export default function DealDetailPage() {
     );
   };
 
+  const formatJoinedDate = (value?: string | null) => {
+    if (!value) return "----年--月";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "----年--月";
+
+    const parts = new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "numeric",
+    }).formatToParts(date);
+
+    const year = parts.find((part) => part.type === "year")?.value ?? "";
+    const month = parts.find((part) => part.type === "month")?.value ?? "";
+
+    return `${year}年${month}月`;
+  };
+
+  const renderCommentUserMeta = (
+    commentCount?: number,
+    totalRating?: number,
+    joinedAt?: string | null,
+    compact = false
+  ) => (
+    <div
+      className={`mt-0.5 flex flex-nowrap items-center gap-x-2 font-normal text-slate-500 md:gap-x-3 ${
+        compact ? "text-[10px]" : "text-[10px] md:text-[11px]"
+      }`}
+    >
+      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+        <MessageSquare className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+        {Number(commentCount ?? 0)} コメント
+      </span>
+      <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap">
+        <ThumbsUp className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+        {Number(totalRating ?? 0)} 総合評価
+      </span>
+      <span className="hidden items-center gap-1 whitespace-nowrap md:inline-flex">
+        <Calendar className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+        参加日 {formatJoinedDate(joinedAt)}
+      </span>
+    </div>
+  );
+
+  const openReportDialog = (type: "comment" | "reply", id: string) => {
+    if (!currentUser) {
+      alert("通報するには、ログインが必要です。");
+      return;
+    }
+    setReportMenuKey(null);
+    setReportTarget({ type, id });
+    setReportReason("");
+    setReportDetails("");
+    setReportError(null);
+    setReportSuccess(false);
+  };
+
+  const closeReportDialog = () => {
+    if (reportSubmitting) return;
+    setReportTarget(null);
+    setReportReason("");
+    setReportDetails("");
+    setReportError(null);
+    setReportSuccess(false);
+  };
+
+  const handleReportSubmit = async () => {
+    if (!currentUser || !reportTarget || !reportReason || reportSubmitting) return;
+    setReportSubmitting(true);
+    setReportError(null);
+
+    const { data: insertedReport, error } = await supabase
+      .from("comment_reports")
+      .insert({
+        reporter_user_id: currentUser.id,
+        comment_id: reportTarget.type === "comment" ? reportTarget.id : null,
+        reply_id: reportTarget.type === "reply" ? reportTarget.id : null,
+        reason: reportReason,
+        details: reportDetails.trim() || null,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      if ((error as any).code === "23505") {
+        setReportError("このコメントはすでに通報済みです。");
+      } else {
+        console.error("comment report error:", error);
+        setReportError("通報の送信に失敗しました。もう一度お試しください。");
+      }
+      setReportSubmitting(false);
+      return;
+    }
+
+    // 通報自体の保存を最優先にし、メール通知の失敗では通報を失敗扱いにしない。
+    if (insertedReport?.id) {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.access_token) {
+          const response = await fetch("/api/report-notification", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ reportId: insertedReport.id }),
+          });
+
+          if (!response.ok) {
+            const result = await response.json().catch(() => null);
+            console.warn(
+              "report email notification warn:",
+              result ?? response.status
+            );
+          }
+        }
+      } catch (emailError) {
+        console.warn("report email notification warn:", emailError);
+      }
+    }
+
+    setReportSuccess(true);
+    setReportSubmitting(false);
+  };
+
+  const renderReportMenu = (
+    type: "comment" | "reply",
+    id: string,
+    authorUserId: string | null,
+    compact = false
+  ) => {
+    if (!currentUser || authorUserId === currentUser.id) return null;
+    const key = `${type}-${id}`;
+    const open = reportMenuKey === key;
+
+    return (
+      <div className="relative shrink-0">
+        <button
+          type="button"
+          onClick={() => setReportMenuKey(open ? null : key)}
+          className={`inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-300 text-slate-500 hover:bg-slate-50 hover:text-slate-700 ${compact ? "h-7 w-7" : "h-8 w-8"}`}
+          aria-label="コメントメニュー"
+          title="メニュー"
+        >
+          <MoreHorizontal className={compact ? "h-4 w-4" : "h-5 w-5"} />
+        </button>
+        {open ? (
+          <div className="absolute right-0 top-full z-40 mt-1 w-32 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+            <button
+              type="button"
+              onClick={() => openReportDialog(type, id)}
+              className="block w-full cursor-pointer px-4 py-2 text-left text-[13px] text-slate-700 hover:bg-slate-50"
+            >
+              通報する
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderNestedReply = (
     reply: ReplyRow,
     parent: CommentRow,
@@ -2089,10 +2983,33 @@ export default function DealDetailPage() {
           <CommentAvatar
             userId={reply.user_id}
             username={reply.username}
+            avatarUrl={reply.avatar_url}
             size="small"
           />
-          <div className="truncate text-[13px] font-semibold text-slate-800">
-            {reply.username ?? "匿名ユーザー"}
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-1.5">
+{reply.user_id ? (
+              <Link
+                href={`/users/${reply.user_id}`}
+                className="block w-fit cursor-pointer truncate text-[13px] font-semibold text-slate-800 hover:underline"
+              >
+                {reply.username ?? "匿名ユーザー"}
+              </Link>
+            ) : (
+              <div className="truncate text-[13px] font-semibold text-slate-800">
+                {reply.username ?? "匿名ユーザー"}
+              </div>
+            )}
+
+              <UserBadge badge={reply.user_badge} />
+
+            </div>
+            {renderCommentUserMeta(
+              reply.user_comment_count,
+              reply.user_total_rating,
+              reply.user_joined_at,
+              true
+            )}
           </div>
         </div>
 
@@ -2106,27 +3023,68 @@ export default function DealDetailPage() {
       </p>
 
       <div className="mt-2 flex items-center gap-2 pl-10">
-        <button
-          type="button"
-          onClick={() => handleReplyLike(reply.id)}
-          disabled={replyLikingId === reply.id}
-          title={
-            reply.has_liked
-              ? "クリックしていいねを取り消す"
-              : "いいね"
-          }
-          className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-3 py-1 text-[12px] ${
-            reply.has_liked
-              ? "border-[#b8d9e2] bg-[#eef7f9] text-[#006888]"
-              : "border-slate-300 text-slate-700 hover:bg-slate-50"
-          } disabled:cursor-wait disabled:opacity-60`}
-        >
-          <ThumbsUp
-            className="h-3.5 w-3.5"
-            fill={reply.has_liked ? "currentColor" : "none"}
-          />
-          {Number(reply.like_count ?? 0)}
-        </button>
+        <div
+                              className="group/reply-reaction relative inline-flex"
+                              onMouseEnter={() => {
+                                if (!isMobile && reply.user_id !== currentUser?.id) {
+                                  setReactionPickerKey(`reply:${reply.id}`);
+                                }
+                              }}
+                              onMouseLeave={() => {
+                                if (!isMobile) setReactionPickerKey(null);
+                              }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                disabled={
+                                  replyLikingId === reply.id ||
+                                  reply.user_id === currentUser?.id
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (reply.user_id === currentUser?.id) return;
+                                  if (!currentUser) {
+                                    alert("返信にリアクションするには、ログインが必要です。");
+                                    return;
+                                  }
+                                  if (isMobile) {
+                                    setReactionPickerKey((prev) =>
+                                      prev === `reply:${reply.id}`
+                                        ? null
+                                        : `reply:${reply.id}`
+                                    );
+                                  }
+                                }}
+                                className={`inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  reply.reaction_type
+                                    ? "text-[#006888]"
+                                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                                }`}
+                                aria-label="リアクション"
+                              >
+                                <CommentReactionSummary
+                                  counts={reply.reaction_counts}
+                                  selected={reply.reaction_type}
+                                />
+                              </button>
+
+                              {reactionPickerKey === `reply:${reply.id}` ? (
+                                <div
+                                  className="absolute bottom-full left-0 z-50 pb-1"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <CommentReactionPicker
+                                    selected={reply.reaction_type}
+                                    counts={reply.reaction_counts}
+                                    disabled={replyLikingId === reply.id}
+                                    onSelect={(reaction) =>
+                                      handleReplyReaction(reply.id, reaction)
+                                    }
+                                  />
+                                </div>
+                              ) : null}
+                            </div>
 
         <button
           type="button"
@@ -2137,6 +3095,7 @@ export default function DealDetailPage() {
         >
           返信
         </button>
+        <div className="ml-auto">{renderReportMenu("reply", reply.id, reply.user_id, true)}</div>
       </div>
     </div>
   );
@@ -2183,10 +3142,32 @@ export default function DealDetailPage() {
                     <CommentAvatar
                       userId={reply.user_id}
                       username={reply.username}
+                      avatarUrl={reply.avatar_url}
                       size="normal"
                     />
-                    <div className="min-w-0 text-[15px] font-semibold text-slate-800">
-                      {reply.username ?? "匿名ユーザー"}
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-1.5">
+{reply.user_id ? (
+                        <Link
+                          href={`/users/${reply.user_id}`}
+                          className="block w-fit cursor-pointer text-[15px] font-semibold text-slate-800 hover:underline"
+                        >
+                          {reply.username ?? "匿名ユーザー"}
+                        </Link>
+                      ) : (
+                        <div className="text-[15px] font-semibold text-slate-800">
+                          {reply.username ?? "匿名ユーザー"}
+                        </div>
+                      )}
+
+                        <UserBadge badge={reply.user_badge} />
+
+                      </div>
+                      {renderCommentUserMeta(
+                        reply.user_comment_count,
+                        reply.user_total_rating,
+                        reply.user_joined_at
+                      )}
                     </div>
                   </div>
 
@@ -2227,27 +3208,68 @@ export default function DealDetailPage() {
                       : "mt-4 flex items-center gap-3 pl-[52px]"
                   }
                 >
-                  <button
-                    type="button"
-                    onClick={() => handleReplyLike(reply.id)}
-                    disabled={replyLikingId === reply.id}
-                    title={
-                      reply.has_liked
-                        ? "クリックしていいねを取り消す"
-                        : "いいね"
-                    }
-                    className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-3 py-1.5 text-[13px] ${
-                      reply.has_liked
-                        ? "border-[#b8d9e2] bg-[#eef7f9] text-[#006888]"
-                        : "border-slate-300 text-slate-700 hover:bg-slate-50"
-                    } disabled:cursor-wait disabled:opacity-60`}
-                  >
-                    <ThumbsUp
-                      className="h-4 w-4"
-                      fill={reply.has_liked ? "currentColor" : "none"}
-                    />
-                    {Number(reply.like_count ?? 0)}
-                  </button>
+                  <div
+                              className="group/reply-reaction relative inline-flex"
+                              onMouseEnter={() => {
+                                if (!isMobile && reply.user_id !== currentUser?.id) {
+                                  setReactionPickerKey(`reply:${reply.id}`);
+                                }
+                              }}
+                              onMouseLeave={() => {
+                                if (!isMobile) setReactionPickerKey(null);
+                              }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                disabled={
+                                  replyLikingId === reply.id ||
+                                  reply.user_id === currentUser?.id
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (reply.user_id === currentUser?.id) return;
+                                  if (!currentUser) {
+                                    alert("返信にリアクションするには、ログインが必要です。");
+                                    return;
+                                  }
+                                  if (isMobile) {
+                                    setReactionPickerKey((prev) =>
+                                      prev === `reply:${reply.id}`
+                                        ? null
+                                        : `reply:${reply.id}`
+                                    );
+                                  }
+                                }}
+                                className={`inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  reply.reaction_type
+                                    ? "text-[#006888]"
+                                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                                }`}
+                                aria-label="リアクション"
+                              >
+                                <CommentReactionSummary
+                                  counts={reply.reaction_counts}
+                                  selected={reply.reaction_type}
+                                />
+                              </button>
+
+                              {reactionPickerKey === `reply:${reply.id}` ? (
+                                <div
+                                  className="absolute bottom-full left-0 z-50 pb-1"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <CommentReactionPicker
+                                    selected={reply.reaction_type}
+                                    counts={reply.reaction_counts}
+                                    disabled={replyLikingId === reply.id}
+                                    onSelect={(reaction) =>
+                                      handleReplyReaction(reply.id, reaction)
+                                    }
+                                  />
+                                </div>
+                              ) : null}
+                            </div>
 
                   <button
                     type="button"
@@ -2258,6 +3280,7 @@ export default function DealDetailPage() {
                   >
                     返信
                   </button>
+                  <div className="ml-auto">{renderReportMenu("reply", reply.id, reply.user_id)}</div>
                 </div>
 
                 {renderReplyComposer(parent.id, mobile)}
@@ -2280,10 +3303,32 @@ export default function DealDetailPage() {
                   <CommentAvatar
                     userId={comment.user_id}
                     username={comment.username}
+                    avatarUrl={comment.avatar_url}
                     size="normal"
                   />
-                  <div className="min-w-0 text-[15px] font-semibold text-slate-800">
-                    {comment.username ?? "匿名ユーザー"}
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
+{comment.user_id ? (
+                      <Link
+                        href={`/users/${comment.user_id}`}
+                        className="block w-fit cursor-pointer text-[15px] font-semibold text-slate-800 hover:underline"
+                      >
+                        {comment.username ?? "匿名ユーザー"}
+                      </Link>
+                    ) : (
+                      <div className="text-[15px] font-semibold text-slate-800">
+                        {comment.username ?? "匿名ユーザー"}
+                      </div>
+                    )}
+
+                      <UserBadge badge={comment.user_badge} />
+
+                    </div>
+                    {renderCommentUserMeta(
+                      comment.user_comment_count,
+                      comment.user_total_rating,
+                      comment.user_joined_at
+                    )}
                   </div>
                 </div>
 
@@ -2309,27 +3354,68 @@ export default function DealDetailPage() {
                     : "mt-4 flex items-center gap-3 pl-[52px]"
                 }
               >
-                <button
-                  type="button"
-                  onClick={() => handleCommentLike(comment.id)}
-                  disabled={!currentUser || commentLikingId === comment.id}
-                  title={
-                    comment.has_liked
-                      ? "クリックしていいねを取り消す"
-                      : "いいね"
-                  }
-                  className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-3 py-1.5 text-[13px] ${
-                    comment.has_liked
-                      ? "border-[#b8d9e2] bg-[#eef7f9] text-[#006888]"
-                      : "border-slate-300 text-slate-700 hover:bg-slate-50"
-                  } disabled:cursor-wait disabled:opacity-60`}
-                >
-                  <ThumbsUp
-                    className="h-4 w-4"
-                    fill={comment.has_liked ? "currentColor" : "none"}
-                  />
-                  {Number(comment.like_count ?? 0)}
-                </button>
+                <div
+                              className="group/comment-reaction relative inline-flex"
+                              onMouseEnter={() => {
+                                if (!isMobile && comment.user_id !== currentUser?.id) {
+                                  setReactionPickerKey(`comment:${comment.id}`);
+                                }
+                              }}
+                              onMouseLeave={() => {
+                                if (!isMobile) setReactionPickerKey(null);
+                              }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                disabled={
+                                  commentLikingId === comment.id ||
+                                  comment.user_id === currentUser?.id
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (comment.user_id === currentUser?.id) return;
+                                  if (!currentUser) {
+                                    alert("コメントにリアクションするには、ログインが必要です。");
+                                    return;
+                                  }
+                                  if (isMobile) {
+                                    setReactionPickerKey((prev) =>
+                                      prev === `comment:${comment.id}`
+                                        ? null
+                                        : `comment:${comment.id}`
+                                    );
+                                  }
+                                }}
+                                className={`inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                  comment.reaction_type
+                                    ? "text-[#006888]"
+                                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                                }`}
+                                aria-label="リアクション"
+                              >
+                                <CommentReactionSummary
+                                  counts={comment.reaction_counts}
+                                  selected={comment.reaction_type}
+                                />
+                              </button>
+
+                              {reactionPickerKey === `comment:${comment.id}` ? (
+                                <div
+                                  className="absolute bottom-full left-0 z-50 pb-1"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  <CommentReactionPicker
+                                    selected={comment.reaction_type}
+                                    counts={comment.reaction_counts}
+                                    disabled={commentLikingId === comment.id}
+                                    onSelect={(reaction) =>
+                                      handleCommentReaction(comment.id, reaction)
+                                    }
+                                  />
+                                </div>
+                              ) : null}
+                            </div>
 
                 <button
                   type="button"
@@ -2338,6 +3424,7 @@ export default function DealDetailPage() {
                 >
                   返信
                 </button>
+                <div className="ml-auto">{renderReportMenu("comment", comment.id, comment.user_id)}</div>
               </div>
 
               {replyCount > 0 ? (
@@ -2454,24 +3541,17 @@ export default function DealDetailPage() {
 
           <div className="mt-2 flex items-center justify-end gap-2">
             <button
-              type="button"
-              onClick={() => {
-                setMobileCommentComposer(null);
-                setCommentError(null);
-              }}
-              className="cursor-pointer rounded-full px-3 py-1.5 text-[13px] font-medium text-slate-500 hover:bg-slate-100"
-            >
-              キャンセル
-            </button>
-
-            <button
               type="submit"
               disabled={!currentUser || commentLoading || !commentBody.trim()}
-              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-[#006888] text-[20px] font-semibold text-white hover:bg-[#00546d] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-[#1677ff] text-[20px] font-semibold text-white shadow-sm hover:bg-[#0f67df] disabled:cursor-not-allowed disabled:opacity-50"
               aria-label="コメントを投稿"
               title="コメントを投稿"
             >
-              {commentLoading ? "…" : "↑"}
+              {commentLoading ? (
+                "…"
+              ) : (
+                <ArrowUp className="h-[19px] w-[19px]" strokeWidth={2} />
+              )}
             </button>
           </div>
         </div>
@@ -2504,7 +3584,7 @@ export default function DealDetailPage() {
               コメントに参加する
             </h2>
             <p className="mt-1 text-[14px] text-slate-600">
-              トクミッケのみんなと情報を共有しましょう
+              この商品やディール内容について意見をシェアしよう！
             </p>
           </div>
         ) : (
@@ -2513,7 +3593,7 @@ export default function DealDetailPage() {
               コメントに参加する
             </h3>
             <p className="mt-1 text-[14px] text-slate-600">
-              トクミッケのみんなと情報を共有しましょう
+              この商品やディール内容について意見をシェアしよう！
             </p>
           </div>
         )}
@@ -2557,24 +3637,17 @@ export default function DealDetailPage() {
               />
 
               <button
-                type="button"
-                onClick={() => {
-                  setDesktopCommentComposer(null);
-                  setCommentError(null);
-                }}
-                className="cursor-pointer rounded-full px-2 py-1 text-[12px] font-medium text-slate-500 hover:bg-slate-100"
-              >
-                キャンセル
-              </button>
-
-              <button
                 type="submit"
                 disabled={!currentUser || commentLoading || !commentBody.trim()}
-                className="inline-flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-full bg-[#006888] text-[22px] font-semibold text-white hover:bg-[#00546d] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-full bg-[#1677ff] text-[22px] font-semibold text-white shadow-sm hover:bg-[#0f67df] disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="コメントを投稿"
                 title="コメントを投稿"
               >
-                {commentLoading ? "…" : "↑"}
+                {commentLoading ? (
+                "…"
+              ) : (
+                <ArrowUp className="h-[19px] w-[19px]" strokeWidth={2} />
+              )}
               </button>
             </div>
           </form>
@@ -2626,7 +3699,7 @@ export default function DealDetailPage() {
     return (
       <div className="min-h-screen bg-[#f7f8fa]">
         <ViewTracker
-          dealId={id}
+          dealId={deal?.id ?? ""}
           enabled={!!deal && !loading && !errorMsg}
         />
 
@@ -2646,9 +3719,18 @@ export default function DealDetailPage() {
                   <span className="rounded bg-[#f5ecd1] px-2 py-[2px] text-[#7b6330]">
                     注目ディール
                   </span>
-                  <span>{deal.author_username ?? "トクミッケ"}</span>
+                  {deal.user_id ? (
+                    <Link
+                      href={`/users/${deal.user_id}`}
+                      className="cursor-pointer font-semibold text-[#006888] hover:underline"
+                    >
+                      {deal.author_username ?? "匿名ユーザー"}
+                    </Link>
+                  ) : (
+                    <span>{deal.author_username ?? "トクミッケ"}</span>
+                  )}
                   <span>·</span>
-                  <span>{fmtShort(deal.created_at)}</span>
+                  <span>{fmtDealDateTime(deal.created_at)}</span>
                 </div>
 
                 <div className="overflow-hidden rounded-lg bg-[#f6f6f6]">
@@ -2742,7 +3824,7 @@ export default function DealDetailPage() {
                           fill={deal.has_liked ? "currentColor" : "none"}
                         />
                         <span className="text-[14px] text-slate-700">
-                          {Number(deal.likes_count ?? 0)}
+                          {getDealVoteScore(deal)}
                         </span>
                       </button>
                       <span className="h-5 w-px bg-slate-200" />
@@ -2811,6 +3893,34 @@ export default function DealDetailPage() {
                 </div>
               </div>
 
+              <div className="mt-3 bg-white shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setOpenPosterNote((v) => !v)}
+                  className="flex w-full cursor-pointer items-center justify-between px-4 py-5 text-left"
+                >
+                  <span className="text-[18px] font-semibold text-slate-900">
+                    投稿者メモ
+                  </span>
+                  {openPosterNote ? (
+                    <ChevronUp className="h-6 w-6 text-slate-700" />
+                  ) : (
+                    <ChevronDown className="h-6 w-6 text-slate-700" />
+                  )}
+                </button>
+
+                {openPosterNote ? (
+                  <div className="px-4 pb-5 text-[16px] leading-[1.6] text-slate-800">
+                    {deal.comment ? (
+                      <div className="whitespace-pre-wrap">{deal.comment}</div>
+                    ) : (
+                      <p className="text-slate-500">投稿者メモはありません。</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
+
               <div className="mt-4 bg-white shadow-sm">
                 <button
                   type="button"
@@ -2834,7 +3944,7 @@ export default function DealDetailPage() {
                         className={`relative ${
                           productDetailsExpanded
                             ? ""
-                            : "max-h-[240px] overflow-hidden"
+                            : "max-h-[76px] overflow-hidden"
                         }`}
                       >
                         <p className="whitespace-pre-wrap">{deal.item_description}</p>
@@ -2842,7 +3952,7 @@ export default function DealDetailPage() {
                           <button
                             type="button"
                             onClick={() => setProductDetailsExpanded(true)}
-                            className="absolute inset-x-0 bottom-0 flex h-24 cursor-pointer items-end justify-center bg-gradient-to-b from-white/0 via-white/80 to-white pb-1 text-[15px] font-semibold text-[#006888]"
+                            className="absolute inset-x-0 bottom-0 flex h-14 cursor-pointer items-end justify-center bg-gradient-to-b from-white/0 via-white/90 to-white pb-0.5 text-[15px] font-semibold text-[#006888]"
                           >
                             もっと見る
                           </button>
@@ -2857,93 +3967,6 @@ export default function DealDetailPage() {
                 ) : null}
               </div>
 
-              <div className="mt-3 bg-white shadow-sm">
-                <button
-                  type="button"
-                  onClick={() => setOpenPosterNote((v) => !v)}
-                  className="flex w-full cursor-pointer items-center justify-between px-4 py-5 text-left"
-                >
-                  <span className="text-[18px] font-semibold text-slate-900">
-                    投稿者メモ
-                  </span>
-                  {openPosterNote ? (
-                    <ChevronUp className="h-6 w-6 text-slate-700" />
-                  ) : (
-                    <ChevronDown className="h-6 w-6 text-slate-700" />
-                  )}
-                </button>
-
-                {openPosterNote ? (
-                  <div className="px-4 pb-5 text-[16px] leading-[1.6] text-slate-800">
-                    <ul className="list-disc pl-6">
-                      <li>期間限定のディールです。在庫切れ前にご確認ください。</li>
-                      <li>価格・送料・クーポン条件は遷移先で変わる場合があります。</li>
-                      {deal.comment ? <li>{deal.comment}</li> : null}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="mt-3 bg-white shadow-sm">
-                <button
-                  type="button"
-                  onClick={() => setOpenProductInfo((v) => !v)}
-                  className="flex w-full cursor-pointer items-center justify-between px-4 py-5 text-left"
-                >
-                  <span className="text-[18px] font-semibold text-slate-900">
-                    製品情報
-                  </span>
-                  {openProductInfo ? (
-                    <ChevronUp className="h-6 w-6 text-slate-700" />
-                  ) : (
-                    <ChevronDown className="h-6 w-6 text-slate-700" />
-                  )}
-                </button>
-
-                {openProductInfo ? (
-                  <div className="px-4 pb-5 text-[15px] leading-[1.6] text-slate-800">
-                    <div className="grid grid-cols-[110px_1fr] gap-y-2">
-                      <div className="text-slate-500">ショップ</div>
-                      <div>{deal.shop_name || "未設定"}</div>
-
-                      <div className="text-slate-500">マーケット</div>
-                      <div>{deal.market || "未設定"}</div>
-
-                      <div className="text-slate-500">投稿日</div>
-                      <div>{fmtShort(deal.created_at)}</div>
-
-                      <div className="text-slate-500">投稿者</div>
-                      <div>{deal.author_username ?? "匿名ユーザー"}</div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="mt-3 bg-white shadow-sm">
-                <button
-                  type="button"
-                  onClick={() => setOpenAboutPoster((v) => !v)}
-                  className="flex w-full cursor-pointer items-center justify-between px-4 py-5 text-left"
-                >
-                  <span className="text-[18px] font-semibold text-slate-900">
-                    投稿者について
-                  </span>
-                  {openAboutPoster ? (
-                    <ChevronUp className="h-6 w-6 text-slate-700" />
-                  ) : (
-                    <ChevronDown className="h-6 w-6 text-slate-700" />
-                  )}
-                </button>
-
-                {openAboutPoster ? (
-                  <div className="px-4 pb-5 text-[15px] leading-[1.6] text-slate-800">
-                    <p>投稿者: {deal.author_username ?? "匿名ユーザー"}</p>
-                    <p className="mt-2">
-                      トクミッケ のコミュニティメンバーとしてディールを共有しています。
-                    </p>
-                  </div>
-                ) : null}
-              </div>
 
               <div
                 id="comments"
@@ -2976,6 +3999,50 @@ export default function DealDetailPage() {
           )}
         </main>
 
+        {reportTarget ? (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 px-4" onClick={closeReportDialog}>
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between gap-4">
+                <h3 className="text-lg font-bold text-slate-900">コメントを通報</h3>
+                <button type="button" onClick={closeReportDialog} disabled={reportSubmitting} className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50" aria-label="閉じる">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              {reportSuccess ? (
+                <div className="mt-5">
+                  <p className="text-sm leading-6 text-slate-700">通報を受け付けました。ご協力ありがとうございます。</p>
+                  <div className="mt-5 flex justify-end">
+                    <button type="button" onClick={closeReportDialog} className="cursor-pointer rounded-full bg-[#001e43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#002b66]">閉じる</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">通報する理由を選択してください。</p>
+                  <div className="mt-4 space-y-2">
+                    {[
+                      ["harassment", "誹謗中傷・嫌がらせ"],
+                      ["sexual", "不適切・性的な内容"],
+                      ["spam", "スパム・宣伝"],
+                      ["other", "その他"],
+                    ].map(([value, label]) => (
+                      <label key={value} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-800 hover:bg-slate-50">
+                        <input type="radio" name="report-reason" value={value} checked={reportReason === value} onChange={() => setReportReason(value as "harassment" | "sexual" | "spam" | "other")} disabled={reportSubmitting} className="cursor-pointer" />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  <textarea rows={3} value={reportDetails} onChange={(e) => setReportDetails(e.target.value)} disabled={reportSubmitting} placeholder="補足があれば入力してください（任意）" className="mt-4 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43]" />
+                  {reportError ? <p className="mt-3 text-sm leading-5 text-red-600" role="alert">{reportError}</p> : null}
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button type="button" onClick={closeReportDialog} disabled={reportSubmitting} className="cursor-pointer rounded-full border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">キャンセル</button>
+                    <button type="button" onClick={handleReportSubmit} disabled={!reportReason || reportSubmitting} className="cursor-pointer rounded-full bg-[#001e43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#002b66] disabled:cursor-not-allowed disabled:opacity-50">{reportSubmitting ? "送信中..." : "通報する"}</button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
         {shareCopied ? (
           <div className="fixed bottom-[88px] left-1/2 z-[120] -translate-x-1/2 md:bottom-6">
             <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-black px-5 py-3 text-[15px] font-semibold text-white shadow-xl">
@@ -2989,14 +4056,40 @@ export default function DealDetailPage() {
           <div className="fixed inset-x-0 bottom-[72px] z-40 border-t border-slate-200 bg-white px-3 py-2 shadow-[0_-6px_20px_rgba(0,0,0,0.08)]">
             <div className="mx-auto flex max-w-[720px] items-center gap-3">
               <div className="flex items-center gap-3 rounded-full border border-slate-200 px-3 py-2 text-[14px] text-slate-700">
-                <div className="inline-flex items-center gap-1">
-                  <ThumbsUp className="h-4 w-4 text-[#006888]" />
-                  {Number(deal.likes_count ?? 0)}
-                </div>
-                <div className="inline-flex items-center gap-1">
-                  <MessageSquare className="h-4 w-4 text-orange-500" />
-                  {totalDiscussionCount}
-                </div>
+                <div className="inline-flex h-8 shrink-0 items-center overflow-hidden rounded-full border border-slate-200 bg-white">
+              <button
+                type="button"
+                onClick={handleLike}
+                disabled={liking || disliking || deal.user_id === currentUser?.id}
+                className={`inline-flex h-full cursor-pointer items-center gap-1 px-2.5 text-[13px] transition disabled:cursor-wait disabled:opacity-60 ${
+                  deal.has_liked ? "text-[#006888]" : "text-slate-600"
+                }`}
+                aria-label="おトク！"
+              >
+                <ThumbsUp
+                  className="h-4 w-4 shrink-0"
+                  fill={deal.has_liked ? "currentColor" : "none"}
+                  strokeWidth={2}
+                />
+                <span>{getDealVoteScore(deal)}</span>
+              </button>
+
+              <span className="h-5 w-px shrink-0 bg-slate-200" aria-hidden="true" />
+
+              <button
+                type="button"
+                onClick={handleBadDeal}
+                disabled={liking || disliking || deal.user_id === currentUser?.id}
+                className="inline-flex h-full cursor-pointer items-center px-2.5 text-orange-500 transition disabled:cursor-wait disabled:opacity-60"
+                aria-label="イマイチ"
+              >
+                <ThumbsDown
+                  className="h-4 w-4 shrink-0"
+                  fill={deal.has_disliked ? "currentColor" : "none"}
+                  strokeWidth={2}
+                />
+              </button>
+            </div>
               </div>
 
               <a
@@ -3023,9 +4116,53 @@ export default function DealDetailPage() {
       `}</style>
 
       <ViewTracker
-        dealId={id}
+        dealId={deal?.id ?? ""}
         enabled={!!deal && !loading && !errorMsg}
       />
+
+      {reportTarget ? (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 px-4" onClick={closeReportDialog}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-4">
+              <h3 className="text-lg font-bold text-slate-900">コメントを通報</h3>
+              <button type="button" onClick={closeReportDialog} disabled={reportSubmitting} className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50" aria-label="閉じる">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {reportSuccess ? (
+              <div className="mt-5">
+                <p className="text-sm leading-6 text-slate-700">通報を受け付けました。ご協力ありがとうございます。</p>
+                <div className="mt-5 flex justify-end">
+                  <button type="button" onClick={closeReportDialog} className="cursor-pointer rounded-full bg-[#001e43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#002b66]">閉じる</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="mt-2 text-sm leading-6 text-slate-600">通報する理由を選択してください。</p>
+                <div className="mt-4 space-y-2">
+                  {[
+                    ["harassment", "誹謗中傷・嫌がらせ"],
+                    ["sexual", "不適切・性的な内容"],
+                    ["spam", "スパム・宣伝"],
+                    ["other", "その他"],
+                  ].map(([value, label]) => (
+                    <label key={value} className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-800 hover:bg-slate-50">
+                      <input type="radio" name="report-reason" value={value} checked={reportReason === value} onChange={() => setReportReason(value as "harassment" | "sexual" | "spam" | "other")} disabled={reportSubmitting} className="cursor-pointer" />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <textarea rows={3} value={reportDetails} onChange={(e) => setReportDetails(e.target.value)} disabled={reportSubmitting} placeholder="補足があれば入力してください（任意）" className="mt-4 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43]" />
+                {reportError ? <p className="mt-3 text-sm leading-5 text-red-600" role="alert">{reportError}</p> : null}
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={closeReportDialog} disabled={reportSubmitting} className="cursor-pointer rounded-full border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">キャンセル</button>
+                  <button type="button" onClick={handleReportSubmit} disabled={!reportReason || reportSubmitting} className="cursor-pointer rounded-full bg-[#001e43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#002b66] disabled:cursor-not-allowed disabled:opacity-50">{reportSubmitting ? "送信中..." : "通報する"}</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {shareCopied ? (
         <div className="fixed bottom-6 left-1/2 z-[120] -translate-x-1/2">
@@ -3081,10 +4218,10 @@ export default function DealDetailPage() {
               <button
                 type="button"
                 onClick={handleLike}
-                disabled={liking || disliking}
+                disabled={liking || disliking || deal.user_id === currentUser?.id}
                 className={`inline-flex h-full cursor-pointer items-center gap-1.5 px-3 text-sm ${
                   deal.has_liked ? "text-[#006888]" : "text-slate-700"
-                } disabled:cursor-wait disabled:opacity-60`}
+                } disabled:cursor-not-allowed disabled:opacity-60`}
                 title={
                   deal.has_liked
                     ? "クリックして「お得」投票を取り消す"
@@ -3095,7 +4232,7 @@ export default function DealDetailPage() {
                   className="h-4 w-4"
                   fill={deal.has_liked ? "currentColor" : "none"}
                 />
-                <span>{Number(deal.likes_count ?? 0)}</span>
+                <span>{getDealVoteScore(deal)}</span>
               </button>
 
               <span className="h-5 w-px bg-slate-200" />
@@ -3103,10 +4240,10 @@ export default function DealDetailPage() {
               <button
                 type="button"
                 onClick={handleBadDeal}
-                disabled={liking || disliking}
+                disabled={liking || disliking || deal.user_id === currentUser?.id}
                 className={`inline-flex h-full cursor-pointer items-center justify-center px-3 ${
                   deal.has_disliked ? "text-orange-500" : "text-orange-500"
-                } disabled:cursor-wait disabled:opacity-60`}
+                } disabled:cursor-not-allowed disabled:opacity-60`}
                 title={
                   deal.has_disliked
                     ? "クリックして「イマイチ」投票を取り消す"
@@ -3173,17 +4310,21 @@ export default function DealDetailPage() {
                         <div>
                           <div className="inline-flex flex-wrap items-center gap-2">
                             <span className="text-xs text-slate-500">
-                              {new Date(deal.created_at).toLocaleString("ja-JP", {
-                                year: "numeric",
-                                month: "2-digit",
-                                day: "2-digit",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
+                              {fmtDealDateTime(deal.created_at)}
                             </span>
 
                             <span className="text-xs text-slate-500">
-                              ・投稿者 {deal.author_username ?? "匿名ユーザー"}
+                              ・投稿者{" "}
+                              {deal.user_id ? (
+                                <Link
+                                  href={`/users/${deal.user_id}`}
+                                  className="cursor-pointer font-semibold text-[#006888] hover:underline"
+                                >
+                                  {deal.author_username ?? "匿名ユーザー"}
+                                </Link>
+                              ) : (
+                                deal.author_username ?? "匿名ユーザー"
+                              )}
                             </span>
                           </div>
 
@@ -3280,7 +4421,7 @@ export default function DealDetailPage() {
                                   fill={deal.has_liked ? "currentColor" : "none"}
                                 />
                                 <span className="text-sm">
-                                  {Number(deal.likes_count ?? 0)}
+                                  {getDealVoteScore(deal)}
                                 </span>
                               </button>
                               <span className="h-5 w-px bg-slate-200" />
@@ -3363,6 +4504,20 @@ export default function DealDetailPage() {
                     </div>
                   </section>
 
+                  {deal.comment ? (
+                    <section className={`mt-6 ${sectionCard}`}>
+                      <div className="mb-4 border-b border-slate-200 pb-3">
+                        <h2 className="text-lg font-semibold text-slate-900">
+                          投稿者コメント
+                        </h2>
+                      </div>
+
+                      <div className="whitespace-pre-wrap text-sm leading-7 text-slate-800">
+                        {deal.comment}
+                      </div>
+                    </section>
+                  ) : null}
+
                   <section className={`mt-6 ${sectionCard}`}>
                     <div className="mb-4 border-b border-slate-200 pb-3">
                       <h2 className="text-lg font-semibold text-slate-900">
@@ -3412,19 +4567,6 @@ export default function DealDetailPage() {
                     )}
                   </section>
 
-                  {deal.comment ? (
-                    <section className={`mt-6 ${sectionCard}`}>
-                      <div className="mb-4 border-b border-slate-200 pb-3">
-                        <h2 className="text-lg font-semibold text-slate-900">
-                          投稿者コメント
-                        </h2>
-                      </div>
-
-                      <div className="whitespace-pre-wrap text-sm leading-7 text-slate-800">
-                        {deal.comment}
-                      </div>
-                    </section>
-                  ) : null}
 
                   {renderCommunityVoting(false)}
 

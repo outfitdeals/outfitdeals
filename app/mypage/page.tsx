@@ -18,6 +18,9 @@ import { supabase } from "@/lib/supabaseClient";
 
 type DealRow = {
   id: string;
+  public_id?: number | null;
+  shop_id?: string | null;
+  item_id?: string | null;
   created_at: string;
   user_id?: string | null;
   title: string | null;
@@ -52,6 +55,19 @@ type MyLikeRow = {
   deal_id: string | null;
 };
 
+type CommentReactionType = "deal" | "helpful" | "funny" | "not_helpful";
+
+type MyCommentReactionRow = {
+  id: string;
+  created_at: string;
+  deal_id: string | null;
+  target_id: string;
+  target_type: "comment" | "reply";
+  target_body: string;
+  comment_id: string | null;
+  reaction_type: CommentReactionType;
+};
+
 type SavedRow = {
   id: string;
   created_at: string;
@@ -74,12 +90,42 @@ type NotificationRow = {
 
 type DealMini = {
   id: string;
+  public_id?: number | null;
+  shop_id?: string | null;
+  item_id?: string | null;
   title: string | null;
   image_url: string | null;
   price?: number | null;
   shop_name?: string | null;
   is_expired?: boolean | null;
 };
+
+function normalizeDealSlugPart(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._~-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildDealDetailPath(deal: {
+  id: string;
+  public_id?: number | null;
+  shop_id?: string | null;
+  item_id?: string | null;
+}) {
+  if (deal.public_id == null) return `/deals/${deal.id}`;
+
+  const shopId = normalizeDealSlugPart(deal.shop_id);
+  const itemId = normalizeDealSlugPart(deal.item_id);
+  const suffix = [shopId, itemId].filter(Boolean).join("-");
+
+  return suffix
+    ? `/deals/${deal.public_id}-${suffix}`
+    : `/deals/${deal.public_id}`;
+}
 
 function yen(n: number | null) {
   if (n == null) return "";
@@ -149,6 +195,7 @@ function ProfileAvatar({
         <img
           src={src}
           alt=""
+          referrerPolicy="no-referrer"
           className="h-full w-full object-cover"
           onError={() => setImageError(true)}
         />
@@ -374,6 +421,8 @@ function MyPageContent() {
   };
 
   const [username, setUsername] = useState<string>("");
+  const [userBadge, setUserBadge] = useState<string | null>(null);
+  const [usernameChangedAt, setUsernameChangedAt] = useState<string | null>(null);
   const [usernameDraft, setUsernameDraft] = useState<string>("");
   const [savingUsername, setSavingUsername] = useState(false);
   const [usernameMsg, setUsernameMsg] = useState<string | null>(null);
@@ -388,11 +437,15 @@ function MyPageContent() {
   const [googleLinkMsg, setGoogleLinkMsg] = useState<string | null>(null);
   const [linkingLine, setLinkingLine] = useState(false);
   const [lineLinkMsg, setLineLinkMsg] = useState<string | null>(null);
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteAccountMsg, setDeleteAccountMsg] = useState<string | null>(null);
 
   const [myDeals, setMyDeals] = useState<DealRow[]>([]);
   const [myComments, setMyComments] = useState<MyCommentRow[]>([]);
   const [myReplies, setMyReplies] = useState<MyReplyRow[]>([]);
   const [myLikes, setMyLikes] = useState<MyLikeRow[]>([]);
+  const [myCommentReactions, setMyCommentReactions] = useState<MyCommentReactionRow[]>([]);
+  const [commentLikesReceived, setCommentLikesReceived] = useState(0);
   const [savedRows, setSavedRows] = useState<SavedRow[]>([]);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [dealMiniMap, setDealMiniMap] = useState<Record<string, DealMini>>({});
@@ -449,7 +502,7 @@ function MyPageContent() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("username, avatar_url")
+        .select("username, avatar_url, user_badge, username_changed_at")
         .eq("id", data.user.id)
         .maybeSingle();
 
@@ -463,6 +516,8 @@ function MyPageContent() {
       setUsername(initialUsername);
       setUsernameDraft(initialUsername);
       setAvatarUrl(initialAvatar);
+      setUserBadge(profile?.user_badge ?? null);
+      setUsernameChangedAt(profile?.username_changed_at ?? null);
 
       setLoadingUser(false);
     })();
@@ -487,7 +542,7 @@ function MyPageContent() {
 
     const { data, error } = await supabase
       .from("deals")
-      .select("id, title, image_url, price, shop_name, is_expired")
+      .select("id, public_id, shop_id, item_id, title, image_url, price, shop_name, is_expired")
       .in("id", unknown);
 
     if (error) {
@@ -504,6 +559,9 @@ function MyPageContent() {
     (data ?? []).forEach((r: any) => {
       patch[String(r.id)] = {
         id: String(r.id),
+        public_id: r.public_id == null ? null : Number(r.public_id),
+        shop_id: r.shop_id ?? null,
+        item_id: r.item_id ?? null,
         title: r.title ?? null,
         image_url: r.image_url ?? null,
         price: r.price ?? null,
@@ -524,7 +582,7 @@ function MyPageContent() {
     const { data, error } = await supabase
       .from("deals")
       .select(
-        "id, created_at, user_id, title, price, market, shop_name, deal_url, image_url, is_expired, likes_count, comments_count"
+        "id, public_id, shop_id, item_id, created_at, user_id, title, price, market, shop_name, deal_url, image_url, is_expired, likes_count, comments_count"
       )
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
@@ -537,6 +595,9 @@ function MyPageContent() {
 
     const rows = (data ?? []).map((r: any) => ({
       id: String(r.id),
+      public_id: r.public_id == null ? null : Number(r.public_id),
+      shop_id: r.shop_id ?? null,
+      item_id: r.item_id ?? null,
       created_at: r.created_at,
       user_id: r.user_id ?? null,
       title: r.title ?? null,
@@ -682,6 +743,209 @@ function MyPageContent() {
     await upsertDealMinis(ids);
   }, [user, upsertDealMinis]);
 
+  const loadMyCommentReactions = useCallback(async () => {
+    if (!user) return;
+
+    const [commentReactionResult, replyReactionResult] = await Promise.all([
+      supabase
+        .from("deal_comment_likes")
+        .select("id, created_at, comment_id, reaction_type")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("deal_comment_reply_likes")
+        .select("id, created_at, reply_id, reaction_type")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    if (commentReactionResult.error) {
+      console.warn("load my comment reactions warn:", commentReactionResult.error);
+    }
+
+    if (replyReactionResult.error) {
+      console.warn("load my reply reactions warn:", replyReactionResult.error);
+    }
+
+    const commentReactionRows = commentReactionResult.data ?? [];
+    const replyReactionRows = replyReactionResult.data ?? [];
+
+    const commentIds = Array.from(
+      new Set(
+        commentReactionRows
+          .map((row: any) => (row.comment_id ? String(row.comment_id) : null))
+          .filter((value): value is string => !!value)
+      )
+    );
+
+    const replyIds = Array.from(
+      new Set(
+        replyReactionRows
+          .map((row: any) => (row.reply_id ? String(row.reply_id) : null))
+          .filter((value): value is string => !!value)
+      )
+    );
+
+    const commentMap: Record<string, { body: string; deal_id: string | null }> = {};
+    const replyMap: Record<string, { body: string; comment_id: string | null }> = {};
+
+    if (commentIds.length > 0) {
+      const { data, error } = await supabase
+        .from("deal_comments")
+        .select("id, body, deal_id")
+        .in("id", commentIds);
+
+      if (error) {
+        console.warn("load reaction target comments warn:", error);
+      } else {
+        (data ?? []).forEach((row: any) => {
+          commentMap[String(row.id)] = {
+            body: row.body ?? "",
+            deal_id: row.deal_id ? String(row.deal_id) : null,
+          };
+        });
+      }
+    }
+
+    if (replyIds.length > 0) {
+      const { data, error } = await supabase
+        .from("deal_comment_replies")
+        .select("id, body, comment_id")
+        .in("id", replyIds);
+
+      if (error) {
+        console.warn("load reaction target replies warn:", error);
+      } else {
+        (data ?? []).forEach((row: any) => {
+          replyMap[String(row.id)] = {
+            body: row.body ?? "",
+            comment_id: row.comment_id ? String(row.comment_id) : null,
+          };
+        });
+      }
+    }
+
+    const parentCommentIds = Array.from(
+      new Set(
+        Object.values(replyMap)
+          .map((row) => row.comment_id)
+          .filter((value): value is string => !!value)
+      )
+    );
+
+    const parentCommentDealMap: Record<string, string | null> = {};
+
+    if (parentCommentIds.length > 0) {
+      const { data, error } = await supabase
+        .from("deal_comments")
+        .select("id, deal_id")
+        .in("id", parentCommentIds);
+
+      if (error) {
+        console.warn("load reaction parent comments warn:", error);
+      } else {
+        (data ?? []).forEach((row: any) => {
+          parentCommentDealMap[String(row.id)] = row.deal_id
+            ? String(row.deal_id)
+            : null;
+        });
+      }
+    }
+
+    const normalized: MyCommentReactionRow[] = [];
+
+    commentReactionRows.forEach((row: any) => {
+      const targetId = row.comment_id ? String(row.comment_id) : "";
+      const target = commentMap[targetId];
+      if (!targetId || !target?.deal_id) return;
+
+      normalized.push({
+        id: String(row.id),
+        created_at: row.created_at,
+        deal_id: target.deal_id,
+        target_id: targetId,
+        target_type: "comment",
+        target_body: target.body,
+        comment_id: targetId,
+        reaction_type: (row.reaction_type ?? "deal") as CommentReactionType,
+      });
+    });
+
+    replyReactionRows.forEach((row: any) => {
+      const targetId = row.reply_id ? String(row.reply_id) : "";
+      const target = replyMap[targetId];
+      if (!targetId || !target?.comment_id) return;
+
+      const dealId = parentCommentDealMap[target.comment_id] ?? null;
+      if (!dealId) return;
+
+      normalized.push({
+        id: String(row.id),
+        created_at: row.created_at,
+        deal_id: dealId,
+        target_id: targetId,
+        target_type: "reply",
+        target_body: target.body,
+        comment_id: target.comment_id,
+        reaction_type: (row.reaction_type ?? "deal") as CommentReactionType,
+      });
+    });
+
+    normalized.sort(
+      (a, b) => +new Date(b.created_at) - +new Date(a.created_at)
+    );
+
+    setMyCommentReactions(normalized);
+
+    await upsertDealMinis(
+      normalized
+        .map((row) => row.deal_id)
+        .filter((value): value is string => !!value)
+    );
+  }, [user, upsertDealMinis]);
+
+  const loadCommentLikesReceived = useCallback(async () => {
+    if (!user) return;
+
+    const commentIds = myComments.map((comment) => comment.id);
+    const replyIds = myReplies.map((reply) => reply.id);
+
+    const [commentLikesResult, replyLikesResult] = await Promise.all([
+      commentIds.length > 0
+        ? supabase
+            .from("deal_comment_likes")
+            .select("id", { count: "exact", head: true })
+            .in("comment_id", commentIds)
+            .in("reaction_type", ["deal", "helpful", "funny"])
+        : Promise.resolve({ count: 0, error: null }),
+      replyIds.length > 0
+        ? supabase
+            .from("deal_comment_reply_likes")
+            .select("id", { count: "exact", head: true })
+            .in("reply_id", replyIds)
+            .in("reaction_type", ["deal", "helpful", "funny"])
+        : Promise.resolve({ count: 0, error: null }),
+    ]);
+
+    if (commentLikesResult.error) {
+      console.warn("load received comment likes warn:", commentLikesResult.error);
+    }
+
+    if (replyLikesResult.error) {
+      console.warn("load received reply likes warn:", replyLikesResult.error);
+    }
+
+    setCommentLikesReceived(
+      Number(commentLikesResult.count ?? 0) +
+        Number(replyLikesResult.count ?? 0)
+    );
+  }, [user, myComments, myReplies]);
+
+  useEffect(() => {
+    if (!user) return;
+    loadCommentLikesReceived();
+  }, [user, loadCommentLikesReceived]);
+
   const loadNotifications = useCallback(async () => {
     if (!user) return;
 
@@ -805,6 +1069,7 @@ function MyPageContent() {
         loadMyComments(),
         loadMyReplies(),
         loadMyLikes(),
+        loadMyCommentReactions(),
         loadSaved(),
         loadNotifications(),
       ]);
@@ -815,6 +1080,7 @@ function MyPageContent() {
     loadMyComments,
     loadMyReplies,
     loadMyLikes,
+    loadMyCommentReactions,
     loadSaved,
     loadNotifications,
   ]);
@@ -852,7 +1118,12 @@ function MyPageContent() {
     }
 
     const anchor = item.comment_id ? `#comment-${item.comment_id}` : "";
-    router.push(`/deals/${item.deal_id}${anchor}`);
+    const notificationDeal = dealMiniMap[item.deal_id];
+    const dealPath = notificationDeal
+      ? buildDealDetailPath(notificationDeal)
+      : `/deals/${item.deal_id}`;
+
+    router.push(`${dealPath}${anchor}`);
   };
 
   const joinedAt = useMemo(() => {
@@ -877,6 +1148,7 @@ function MyPageContent() {
       myComments[0]?.created_at,
       myReplies[0]?.created_at,
       myLikes[0]?.created_at,
+      myCommentReactions[0]?.created_at,
       savedRows[0]?.created_at,
     ].filter(Boolean) as string[];
 
@@ -887,7 +1159,7 @@ function MyPageContent() {
     )[0];
 
     return fmtJP(newest);
-  }, [myDeals, myComments, myReplies, myLikes, savedRows]);
+  }, [myDeals, myComments, myReplies, myLikes, myCommentReactions, savedRows]);
 
   const bestDeal = useMemo(() => {
     if (!myDeals || myDeals.length === 0) return null;
@@ -962,6 +1234,17 @@ function MyPageContent() {
         deal_id: string;
       }
     | {
+        type: "reaction";
+        id: string;
+        created_at: string;
+        deal_id: string;
+        target_type: "comment" | "reply";
+        target_id: string;
+        comment_id: string | null;
+        body: string;
+        reaction_type: CommentReactionType;
+      }
+    | {
         type: "comment";
         id: string;
         created_at: string;
@@ -973,6 +1256,7 @@ function MyPageContent() {
         id: string;
         created_at: string;
         deal_id: string;
+        comment_id: string | null;
         body: string;
       };
 
@@ -987,6 +1271,22 @@ function MyPageContent() {
         id: l.id,
         created_at: l.created_at,
         deal_id: l.deal_id,
+      });
+    });
+
+    myCommentReactions.forEach((reaction) => {
+      if (!reaction.deal_id) return;
+
+      items.push({
+        type: "reaction",
+        id: reaction.id,
+        created_at: reaction.created_at,
+        deal_id: reaction.deal_id,
+        target_type: reaction.target_type,
+        target_id: reaction.target_id,
+        comment_id: reaction.comment_id,
+        body: reaction.target_body,
+        reaction_type: reaction.reaction_type,
       });
     });
 
@@ -1010,6 +1310,7 @@ function MyPageContent() {
         id: r.id,
         created_at: r.created_at,
         deal_id: r.deal_id,
+        comment_id: r.comment_id,
         body: r.body ?? "",
       });
     });
@@ -1019,7 +1320,7 @@ function MyPageContent() {
     );
 
     return items;
-  }, [myLikes, myComments, myReplies]);
+  }, [myLikes, myCommentReactions, myComments, myReplies]);
 
   const activityFiltered = useMemo(() => {
     if (activityTab === "comments") {
@@ -1029,7 +1330,9 @@ function MyPageContent() {
     }
 
     if (activityTab === "likes") {
-      return allActivity.filter((x) => x.type === "like");
+      return allActivity.filter(
+        (x) => x.type === "like" || x.type === "reaction"
+      );
     }
 
     return allActivity;
@@ -1127,8 +1430,33 @@ function MyPageContent() {
     }
   };
 
+  const usernameNextChangeAt = useMemo(() => {
+    if (userBadge === "staff" || !usernameChangedAt) return null;
+
+    const changedAt = new Date(usernameChangedAt);
+    if (Number.isNaN(changedAt.getTime())) return null;
+
+    return new Date(changedAt.getTime() + 90 * 24 * 60 * 60 * 1000);
+  }, [userBadge, usernameChangedAt]);
+
+  const canChangeUsername =
+    userBadge === "staff" ||
+    !usernameNextChangeAt ||
+    usernameNextChangeAt.getTime() <= Date.now();
+
+  const usernameNextChangeLabel = useMemo(() => {
+    if (!usernameNextChangeAt) return "";
+
+    return usernameNextChangeAt.toLocaleDateString("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  }, [usernameNextChangeAt]);
+
   const handleSaveUsername = async () => {
-    if (!user || savingUsername) return;
+    if (!user || savingUsername || !canChangeUsername) return;
 
     const nextUsername = usernameDraft.trim();
 
@@ -1149,7 +1477,7 @@ function MyPageContent() {
       return;
     }
 
-    if (nextUsername === username) {
+    if (nextUsername.toLocaleLowerCase() === username.trim().toLocaleLowerCase()) {
       setUsernameMsg("現在のユーザー名と同じです。");
       return;
     }
@@ -1157,32 +1485,58 @@ function MyPageContent() {
     try {
       setSavingUsername(true);
 
-      const { error } = await supabase.auth.updateUser({
-        data: {
-          username: nextUsername,
-        },
-      });
+      const { data: updatedProfile, error: profileUpdateError } = await supabase
+        .from("profiles")
+        .update({ username: nextUsername })
+        .eq("id", user.id)
+        .select("username, username_changed_at")
+        .single();
 
-      if (error) {
-        console.error("update username error:", error);
-        setUsernameMsg("ユーザー名を更新できませんでした。");
+      if (profileUpdateError) {
+        console.error("update profile username error:", profileUpdateError);
+
+        const combined = `${profileUpdateError.code ?? ""} ${profileUpdateError.message ?? ""} ${profileUpdateError.details ?? ""}`;
+
+        if (combined.includes("23505") || combined.toLowerCase().includes("duplicate")) {
+          setUsernameMsg("このユーザー名はすでに使用されています。");
+        } else if (combined.includes("USERNAME_CHANGE_COOLDOWN")) {
+          setUsernameMsg("ユーザー名は前回の変更から90日間変更できません。");
+        } else {
+          setUsernameMsg("ユーザー名を更新できませんでした。");
+        }
         return;
       }
 
-      setUsername(nextUsername);
-      setUsernameDraft(nextUsername);
+      const savedUsername = updatedProfile?.username?.trim() || nextUsername;
+      const savedChangedAt = updatedProfile?.username_changed_at ?? new Date().toISOString();
+
+      const { error: authUpdateError } = await supabase.auth.updateUser({
+        data: { username: savedUsername },
+      });
+
+      if (authUpdateError) {
+        console.warn("update auth username metadata warn:", authUpdateError);
+      }
+
+      setUsername(savedUsername);
+      setUsernameDraft(savedUsername);
+      setUsernameChangedAt(savedChangedAt);
       setUser((prev: any) =>
         prev
           ? {
               ...prev,
               user_metadata: {
                 ...(prev.user_metadata || {}),
-                username: nextUsername,
+                username: savedUsername,
               },
             }
           : prev
       );
-      setUsernameMsg("ユーザー名を更新しました。");
+      setUsernameMsg(
+        userBadge === "staff"
+          ? "ユーザー名を更新しました。"
+          : "ユーザー名を更新しました。次回の変更は90日後から可能です。"
+      );
     } finally {
       setSavingUsername(false);
     }
@@ -1281,6 +1635,60 @@ function MyPageContent() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     window.location.href = "/";
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user || deletingAccount) return;
+
+    const confirmed = window.confirm(
+      "アカウントを削除しますか？\n\nこの操作は取り消せません。投稿・コメント・返信はサイト上に残りますが、アカウントとの紐付けは解除されます。保存・リアクションなどのアカウントデータは削除されます。"
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingAccount(true);
+      setDeleteAccountMsg(null);
+
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+
+      const accessToken = sessionData.session?.access_token ?? "";
+
+      if (sessionError || !accessToken) {
+        console.error("delete account session error:", sessionError);
+        setDeleteAccountMsg(
+          "ログイン情報を確認できませんでした。再ログインしてからお試しください。"
+        );
+        return;
+      }
+
+      const response = await fetch("/api/delete-account", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => null);
+        console.error("delete account error:", result);
+        setDeleteAccountMsg(
+          "アカウントを削除できませんでした。時間をおいてもう一度お試しください。"
+        );
+        return;
+      }
+
+      await supabase.auth.signOut().catch(() => undefined);
+      window.location.href = "/";
+    } catch (error) {
+      console.error("delete account error:", error);
+      setDeleteAccountMsg(
+        "アカウントを削除できませんでした。時間をおいてもう一度お試しください。"
+      );
+    } finally {
+      setDeletingAccount(false);
+    }
   };
 
   const handleAvatarFileChange = async (
@@ -1419,8 +1827,16 @@ function MyPageContent() {
 
   const countDeals = myDeals.length;
   const countComments = myComments.length + myReplies.length;
-  const countLikes = myLikes.length;
+  const countLikes = myLikes.length + myCommentReactions.length;
   const countSaved = savedRows.length;
+  const countDealLikesReceived = useMemo(
+    () =>
+      myDeals.reduce(
+        (sum, deal) => sum + Number(deal.likes_count ?? 0),
+        0
+      ),
+    [myDeals]
+  );
 
   const activeMyDeals = useMemo(
     () => myDeals.filter((deal) => !deal.is_expired),
@@ -1535,8 +1951,11 @@ function MyPageContent() {
             />
 
             <div className="min-w-0">
-              <div className="truncate text-lg font-bold text-slate-900">
-                {username || "ユーザー名未設定"}
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="truncate text-lg font-bold text-slate-900">
+                  {username || "ユーザー名未設定"}
+                </div>
+                <UserBadge badge={userBadge} />
               </div>
               <div className="mt-0.5 text-xs text-slate-500">
                 トクミッケ メンバー
@@ -1628,8 +2047,11 @@ function MyPageContent() {
                     />
 
                     <div className="min-w-0">
-                      <div className="text-xl font-bold text-slate-900">
-                        {username || "ユーザー名未設定"}
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="truncate text-xl font-bold text-slate-900">
+                          {username || "ユーザー名未設定"}
+                        </div>
+                        <UserBadge badge={userBadge} />
                       </div>
 
                       <div className="mt-2 space-y-1 text-xs text-slate-500">
@@ -1681,31 +2103,28 @@ function MyPageContent() {
 
                     <div className="bg-white px-3 py-4 text-center">
                       <div className="text-2xl font-bold text-slate-900">
-                        {countLikes}
+                        {countDealLikesReceived}
                       </div>
                       <div className="mt-1 text-[11px] font-medium text-slate-500">
-                        いいね
+                        投稿へのいいね
                       </div>
                     </div>
 
                     <div className="bg-white px-3 py-4 text-center">
                       <div className="text-2xl font-bold text-slate-900">
-                        {countSaved}
+                        {commentLikesReceived}
                       </div>
                       <div className="mt-1 text-[11px] font-medium text-slate-500">
-                        保存
+                        コメントへのいいね
                       </div>
                     </div>
 
                     <div className="col-span-2 bg-white px-3 py-4 text-center sm:col-span-1">
                       <div className="text-2xl font-bold text-slate-900">
-                        {myDeals.reduce(
-                          (sum, deal) => sum + Number(deal.likes_count ?? 0),
-                          0
-                        )}
+                        {countSaved}
                       </div>
                       <div className="mt-1 text-[11px] font-medium text-slate-500">
-                        投稿にもらったいいね
+                        保存
                       </div>
                     </div>
                   </div>
@@ -1742,7 +2161,7 @@ function MyPageContent() {
               ) : (
                 <div className="flex items-center gap-3 px-4 py-4 sm:px-6">
                   <Link
-                    href={`/deals/${bestDeal.id}`}
+                    href={buildDealDetailPath(bestDeal)}
                     className="h-20 w-20 flex-none overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200 cursor-pointer"
                   >
                     <img
@@ -1754,7 +2173,7 @@ function MyPageContent() {
 
                   <div className="min-w-0 flex-1">
                     <Link
-                      href={`/deals/${bestDeal.id}`}
+                      href={buildDealDetailPath(bestDeal)}
                       className="line-clamp-2 text-sm font-semibold text-slate-900 hover:underline sm:text-base cursor-pointer"
                     >
                       {bestDeal.title || "タイトル未設定"}
@@ -1821,7 +2240,7 @@ function MyPageContent() {
                     }}
                     rightCount={countLikes}
                   >
-                    いいね
+                    リアクション
                   </TabButton>
                 </div>
               </div>
@@ -1834,43 +2253,98 @@ function MyPageContent() {
                 <ul className="divide-y divide-slate-100">
                   {activityPageItems.map((item) => {
                     const mini = dealMiniMap[item.deal_id];
+                    const dealPath = mini
+                      ? buildDealDetailPath(mini)
+                      : `/deals/${item.deal_id}`;
+                    const commentAnchor =
+                      item.type === "comment"
+                        ? `#comment-${item.id}`
+                        : item.type === "reply" && item.comment_id
+                          ? `#comment-${item.comment_id}`
+                          : item.type === "reaction" && item.comment_id
+                            ? `#comment-${item.comment_id}`
+                            : "";
+                    const activityHref = `${dealPath}${commentAnchor}`;
+
                     return (
                       <li
                         key={`${item.type}:${item.id}`}
                         className="px-4 py-4 sm:px-6"
                       >
-                        <div className="flex items-start gap-4">
-                          <div
-                            className={`mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-full ${
-                              item.type === "like"
-                                ? "bg-rose-50 text-rose-500"
-                                : "bg-[#006888]/10 text-[#006888]"
-                            }`}
+                        <div className="flex items-start gap-3 sm:gap-4">
+                          <Link
+                            href={activityHref}
+                            className="h-16 w-16 flex-none cursor-pointer overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200 sm:h-20 sm:w-20"
                           >
-                            {item.type === "like" ? (
-                              <ThumbsUp className="h-5 w-5" />
-                            ) : (
-                              <MessageSquare className="h-5 w-5" />
-                            )}
-                          </div>
+                            <img
+                              src={mini?.image_url || PLACEHOLDER_IMG}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          </Link>
 
                           <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold text-slate-900">
-                              {item.type === "like"
-                                ? "いいねしました"
-                                : item.type === "comment"
-                                  ? "コメントしました"
-                                  : "返信しました"}
+                            <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-900">
+                              {item.type === "like" ? (
+                                <>
+                                  <span className="text-blue-600">👍</span>
+                                  <span>ディールにおトク！しました</span>
+                                </>
+                              ) : item.type === "reaction" ? (
+                                <>
+                                  <span
+                                    className={
+                                      item.reaction_type === "deal"
+                                        ? "text-blue-600"
+                                        : item.reaction_type === "not_helpful"
+                                          ? "text-red-500"
+                                          : "text-slate-600"
+                                    }
+                                  >
+                                    {item.reaction_type === "deal"
+                                      ? "👍"
+                                      : item.reaction_type === "helpful"
+                                        ? "💡"
+                                        : item.reaction_type === "funny"
+                                          ? "😂"
+                                          : "👎"}
+                                  </span>
+                                  <span>
+                                    {item.reaction_type === "deal"
+                                      ? "おトク！とリアクションしました"
+                                      : item.reaction_type === "helpful"
+                                        ? "なるほど！とリアクションしました"
+                                        : item.reaction_type === "funny"
+                                          ? "おもしろい！とリアクションしました"
+                                          : "イマイチとリアクションしました"}
+                                  </span>
+                                </>
+                              ) : item.type === "comment" ? (
+                                "コメントしました"
+                              ) : (
+                                "返信しました"
+                              )}
                             </div>
 
+                            {item.type === "reaction" && item.body ? (
+                              <Link
+                                href={activityHref}
+                                className="mt-1 block cursor-pointer"
+                              >
+                                <p className="line-clamp-2 whitespace-pre-wrap text-sm text-slate-700 hover:text-slate-900">
+                                  「{item.body}」
+                                </p>
+                              </Link>
+                            ) : null}
+
                             <Link
-                              href={`/deals/${item.deal_id}`}
+                              href={activityHref}
                               className="mt-1 block truncate text-sm font-medium text-[#006888] hover:underline cursor-pointer"
                             >
                               {mini?.title || "タイトル未設定"}
                             </Link>
 
-                            {item.type !== "like" && item.body ? (
+                            {(item.type === "comment" || item.type === "reply") && item.body ? (
                               <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-sm text-slate-700">
                                 {item.body}
                               </p>
@@ -2049,7 +2523,7 @@ function MyPageContent() {
                   >
                     <div className="flex items-center gap-3 sm:grid sm:grid-cols-[112px_minmax(0,1fr)_190px] sm:items-center sm:gap-5">
                       <Link
-                        href={`/deals/${deal.id}`}
+                        href={buildDealDetailPath(deal)}
                         className="h-16 w-16 flex-none overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200 sm:h-24 sm:w-28 cursor-pointer"
                       >
                         <img
@@ -2061,7 +2535,7 @@ function MyPageContent() {
 
                       <div className="min-w-0">
                         <Link
-                          href={`/deals/${deal.id}`}
+                          href={buildDealDetailPath(deal)}
                           className="line-clamp-2 text-sm font-semibold text-blue-700 hover:underline sm:text-[15px] cursor-pointer"
                         >
                           {deal.title || "タイトル未設定"}
@@ -2300,7 +2774,7 @@ function MyPageContent() {
                   >
                     <div className="flex items-center gap-3 sm:grid sm:grid-cols-[112px_minmax(0,1fr)_170px] sm:items-center sm:gap-5">
                       <Link
-                        href={`/deals/${deal.id}`}
+                        href={buildDealDetailPath(deal)}
                         className="h-16 w-16 flex-none overflow-hidden rounded-lg bg-slate-100 ring-1 ring-slate-200 sm:h-24 sm:w-28 cursor-pointer"
                       >
                         <img
@@ -2312,7 +2786,7 @@ function MyPageContent() {
 
                       <div className="min-w-0">
                         <Link
-                          href={`/deals/${deal.id}`}
+                          href={buildDealDetailPath(deal)}
                           className="line-clamp-2 text-sm font-semibold text-blue-700 hover:underline sm:text-[15px] cursor-pointer"
                         >
                           {deal.title || "タイトル未設定"}
@@ -2608,12 +3082,52 @@ function MyPageContent() {
                 </div>
 
                 <div className="max-w-xl">
-                  <div className="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
-                    {username || "-"}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      value={usernameDraft}
+                      onChange={(e) => {
+                        setUsernameDraft(e.target.value);
+                        setUsernameMsg(null);
+                      }}
+                      maxLength={20}
+                      disabled={!canChangeUsername || savingUsername}
+                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#006888] focus:ring-2 focus:ring-[#006888]/15 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                      aria-label="ユーザー名"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveUsername}
+                      disabled={!canChangeUsername || savingUsername}
+                      className="shrink-0 cursor-pointer rounded-md bg-[#006888] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#005a75] disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {savingUsername ? "変更中…" : "変更する"}
+                    </button>
                   </div>
-                  <p className="mt-2 text-xs text-slate-500">
-                    ユーザー名は登録後に変更できません。
+
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    2〜20文字。文字・数字・_（アンダーバー）・-（ハイフン）が使用できます。
                   </p>
+
+                  {userBadge === "staff" ? (
+                    <p className="mt-1 text-xs font-medium text-[#006888]">
+                      スタッフアカウントはいつでもユーザー名を変更できます。
+                    </p>
+                  ) : canChangeUsername ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      変更後90日間は再変更できません。
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs font-medium text-slate-600">
+                      次回変更可能日：{usernameNextChangeLabel || "-"}
+                    </p>
+                  )}
+
+                  {usernameMsg ? (
+                    <p className="mt-2 text-xs font-medium text-slate-700">
+                      {usernameMsg}
+                    </p>
+                  ) : null}
                 </div>
               </div>
 
@@ -2727,14 +3241,37 @@ function MyPageContent() {
                   </p>
                 </div>
 
-                <div>
+                <div className="flex flex-col items-start gap-4">
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                    disabled={deletingAccount}
+                    className="inline-flex cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white px-5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     ログアウト
                   </button>
+
+                  <div className="w-full max-w-xl border-t border-slate-200 pt-4">
+                    <div className="text-sm font-bold text-red-700">アカウントを削除</div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      アカウントを削除すると元に戻せません。投稿・コメント・返信は残りますが、アカウントとの紐付けは解除されます。
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={handleDeleteAccount}
+                      disabled={deletingAccount}
+                      className="mt-3 inline-flex cursor-pointer items-center justify-center rounded-md border border-red-300 bg-white px-4 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingAccount ? "削除中…" : "アカウントを削除する"}
+                    </button>
+
+                    {deleteAccountMsg ? (
+                      <p className="mt-2 text-xs font-medium text-red-700">
+                        {deleteAccountMsg}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2742,6 +3279,17 @@ function MyPageContent() {
         )}
       </main>
     </div>
+  );
+}
+
+
+function UserBadge({ badge }: { badge?: string | null }) {
+  if (badge !== "staff") return null;
+
+  return (
+    <span className="inline-flex shrink-0 items-center rounded bg-[#006888]/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[#006888] ring-1 ring-inset ring-[#006888]/20">
+      スタッフ
+    </span>
   );
 }
 

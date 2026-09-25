@@ -160,6 +160,58 @@ function isDirectRakutenProductUrl(value: string) {
   return Boolean(normalizeRakutenProductUrl(value));
 }
 
+function getRakutenRouteIdentifiers(value: string) {
+  const normalizedUrl = normalizeRakutenProductUrl(value);
+  if (!normalizedUrl) return null;
+
+  try {
+    const url = new URL(normalizedUrl);
+    const pathParts = url.pathname.split("/").filter(Boolean);
+
+    if (pathParts.length < 2) return null;
+
+    const shopId = pathParts[0];
+    const itemId = pathParts[1];
+
+    if (!shopId || !itemId) return null;
+
+    return {
+      marketCode: "rk" as const,
+      shopId,
+      itemId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDealSlugPart(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._~-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildDealDetailPath(params: {
+  publicId: number;
+  shopId: string;
+  itemId: string;
+}) {
+  const suffix = [
+    normalizeDealSlugPart(params.shopId),
+    normalizeDealSlugPart(params.itemId),
+  ]
+    .filter(Boolean)
+    .join("-");
+
+  return suffix
+    ? `/deals/${params.publicId}-${suffix}`
+    : `/deals/${params.publicId}`;
+}
+
 function recoverDirectRakutenUrl(value: string | null | undefined) {
   if (!value) return "";
 
@@ -659,6 +711,24 @@ function PostPageContent() {
       );
       setCategory(inferredCategory);
 
+      const rakutenEndTime =
+        typeof data.endTime === "string" ? data.endTime.trim() : "";
+
+      if (rakutenEndTime) {
+        const endTimeMatch = rakutenEndTime.match(
+          /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T](\d{1,2}):(\d{2})(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/
+        );
+
+        if (endTimeMatch) {
+          const [, year, month, day, hour, minute] = endTimeMatch;
+          setExpiresAt(
+            `${year}/${month.padStart(2, "0")}/${day.padStart(2, "0")} ${hour.padStart(2, "0")}:${minute}`
+          );
+        } else {
+          console.warn("[post] unsupported Rakuten endTime format:", rakutenEndTime);
+        }
+      }
+
       if (typeof data.freeShipping === "boolean") {
         setFreeShipping(data.freeShipping);
       }
@@ -781,6 +851,36 @@ function PostPageContent() {
 
       const trimmedProductUrl =
         normalizeRakutenProductUrl(productUrl) || productUrl.trim();
+      const routeIdentifiers = getRakutenRouteIdentifiers(trimmedProductUrl);
+
+      if (!routeIdentifiers) {
+        setApiError("楽天の商品識別情報を取得できませんでした。商品ページURLをご確認ください。");
+        focusInvalidField("deal-product-url");
+        return;
+      }
+
+      let nextDealNumber = 1;
+
+      if (!isEditMode) {
+        const { data: latestSameProductDeal, error: dealNumberError } = await supabase
+          .from("deals")
+          .select("deal_number")
+          .eq("market_code", routeIdentifiers.marketCode)
+          .eq("shop_id", routeIdentifiers.shopId)
+          .eq("item_id", routeIdentifiers.itemId)
+          .order("deal_number", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (dealNumberError) {
+          console.error("deal number lookup error:", dealNumberError);
+          setApiError("ディール番号の確認に失敗しました。時間をおいて再度お試しください。");
+          return;
+        }
+
+        nextDealNumber = (latestSameProductDeal?.deal_number ?? 0) + 1;
+      }
+
       let finalDealUrl = trimmedProductUrl;
 
       // 新規投稿・編集を問わず、保存時には必ず トクミッケ の
@@ -837,6 +937,9 @@ function PostPageContent() {
         price: price ? Number(price) : null,
         orig_price: origPrice ? Number(origPrice) : null,
         market: market || null,
+        market_code: routeIdentifiers.marketCode,
+        shop_id: routeIdentifiers.shopId,
+        item_id: routeIdentifiers.itemId,
         shop_name: shopName || null,
         source_url: trimmedProductUrl,
         deal_url: finalDealUrl,
@@ -867,24 +970,68 @@ function PostPageContent() {
         return;
       }
 
-      const { data: createdDeal, error } = await supabase
-        .from("deals")
-        .insert({
-          user_id: user.id,
-          ...payload,
-          likes_count: 0,
-          comments_count: 0,
-        })
-        .select("id")
-        .single();
+      let createdDeal: { id: string; public_id: number } | null = null;
+      let insertError: any = null;
+      let assignedDealNumber = nextDealNumber;
 
-      if (error || !createdDeal?.id) {
-        console.error("insert error:", error);
+      // 通常は1回で成功する。もし同時投稿で同じ番号が先に使われた場合だけ、
+      // 最新番号を取り直して最大2回リトライする。
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const result = await supabase
+          .from("deals")
+          .insert({
+            user_id: user.id,
+            ...payload,
+            deal_number: assignedDealNumber,
+            likes_count: 0,
+            comments_count: 0,
+          })
+          .select("id, public_id")
+          .single();
+
+        createdDeal = result.data;
+        insertError = result.error;
+
+        if (!insertError && createdDeal?.id) {
+          break;
+        }
+
+        if (insertError?.code !== "23505") {
+          break;
+        }
+
+        const { data: latestSameProductDeal, error: retryLookupError } =
+          await supabase
+            .from("deals")
+            .select("deal_number")
+            .eq("market_code", routeIdentifiers.marketCode)
+            .eq("shop_id", routeIdentifiers.shopId)
+            .eq("item_id", routeIdentifiers.itemId)
+            .order("deal_number", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (retryLookupError) {
+          console.error("deal number retry lookup error:", retryLookupError);
+          break;
+        }
+
+        assignedDealNumber = (latestSameProductDeal?.deal_number ?? assignedDealNumber) + 1;
+      }
+
+      if (insertError || !createdDeal?.id) {
+        console.error("insert error:", insertError);
         setApiError("投稿の保存に失敗しました。時間をおいて再度お試しください。");
         return;
       }
 
-      router.push(`/deals/${createdDeal.id}`);
+      router.push(
+        buildDealDetailPath({
+          publicId: createdDeal.public_id,
+          shopId: routeIdentifiers.shopId,
+          itemId: routeIdentifiers.itemId,
+        })
+      );
     } catch (err) {
       console.error(err);
       setApiError("予期せぬエラーが発生しました。");
@@ -951,7 +1098,7 @@ function PostPageContent() {
                 onChange={(e) => {
                   const nextUrl = e.target.value;
                   setProductUrl(nextUrl);
-                  clearValidationErrorIfNeeded();
+                                clearValidationErrorIfNeeded();
 
                   if (isEditMode && nextUrl.trim() !== originalDealUrl.trim()) {
                     setDealUrl("");

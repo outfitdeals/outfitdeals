@@ -11,6 +11,9 @@ import { likeDeal, saveDeal } from "@/lib/dealActions";
 
 type DealsRow = {
   id: string;
+  public_id?: number | null;
+  shop_id?: string | null;
+  item_id?: string | null;
   created_at: string;
   user_id: string | null;
   title: string | null;
@@ -126,6 +129,37 @@ function FreeShippingBadge({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function normalizeDealSlugPart(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._~-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function buildDealDetailPath(deal: Pick<DealsRow, "id" | "public_id" | "shop_id" | "item_id">) {
+  if (deal.public_id == null) {
+    return `/deals/${deal.id}`;
+  }
+
+  const suffix = [
+    normalizeDealSlugPart(deal.shop_id),
+    normalizeDealSlugPart(deal.item_id),
+  ]
+    .filter(Boolean)
+    .join("-");
+
+  return suffix
+    ? `/deals/${deal.public_id}-${suffix}`
+    : `/deals/${deal.public_id}`;
+}
+
+function getDealVoteScore(row: Pick<DealsRow, "likes_count" | "dislikes_count">) {
+  return Number(row.likes_count ?? 0) - Number(row.dislikes_count ?? 0);
+}
+
 function getTopDealScore(row: DealsRow) {
   const likes = Number(row.likes_count ?? 0);
   const comments = Number(row.comments_count ?? 0);
@@ -182,7 +216,7 @@ function Card({
   );
 
   const imageWrapper = d.detailUrl ? (
-    <Link href={d.detailUrl} className="block">
+    <Link href={d.detailUrl} className="block cursor-pointer">
       {imageBlock}
     </Link>
   ) : d.linkUrl ? (
@@ -190,7 +224,7 @@ function Card({
       href={d.linkUrl}
       target="_blank"
       rel="noopener noreferrer"
-      className="block"
+      className="block cursor-pointer"
     >
       {imageBlock}
     </a>
@@ -207,15 +241,40 @@ function Card({
     <article className="flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_18px_-10px_rgba(15,23,42,0.28)] transition hover:shadow-[0_12px_24px_-10px_rgba(15,23,42,0.34)]">
       <div className="px-3 pt-3 text-xs text-slate-500">
         <div className="flex items-center gap-2">
-          <img
-            src={d.avatar}
-            alt=""
-            className="h-6 w-6 rounded-full object-cover"
-          />
+          {d.userId ? (
+            <Link
+              href={`/users/${d.userId}`}
+              className="block cursor-pointer"
+              aria-label={`${d.user}のプロフィールを見る`}
+            >
+              <img
+                src={d.avatar}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="h-6 w-6 rounded-full object-cover"
+              />
+            </Link>
+          ) : (
+            <img
+              src={d.avatar}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="h-6 w-6 rounded-full object-cover"
+            />
+          )}
           <div>
             <div className="text-slate-600">
               投稿者{" "}
-              <span className="font-medium text-slate-700">{d.user}</span>
+              {d.userId ? (
+                <Link
+                  href={`/users/${d.userId}`}
+                  className="cursor-pointer font-medium text-slate-700 hover:text-[#006888] hover:underline"
+                >
+                  {d.user}
+                </Link>
+              ) : (
+                <span className="font-medium text-slate-700">{d.user}</span>
+              )}
             </div>
             <div>{d.time}</div>
           </div>
@@ -235,7 +294,7 @@ function Card({
 
         <h3 className="line-clamp-3 text-[14px] font-semibold leading-snug text-slate-900">
           {d.detailUrl ? (
-            <Link href={d.detailUrl} className="hover:underline">
+            <Link href={d.detailUrl} className="cursor-pointer hover:underline">
               {d.title}
             </Link>
           ) : (
@@ -376,7 +435,7 @@ function MobileRecommendCard({
         ) : null}
 
         <h3 className="line-clamp-2 min-h-[32px] text-[12px] font-medium leading-[1.35] text-slate-800">
-          <Link href={d.detailUrl} className="hover:underline">
+          <Link href={d.detailUrl} className="cursor-pointer hover:underline">
             {d.title}
           </Link>
         </h3>
@@ -483,7 +542,7 @@ function MobileDealRow({
           ) : null}
 
           <h3 className="line-clamp-2 text-[14px] font-semibold leading-[1.22] text-slate-800">
-            <Link href={d.detailUrl} className="hover:underline">
+            <Link href={d.detailUrl} className="cursor-pointer hover:underline">
               {d.title}
             </Link>
           </h3>
@@ -581,7 +640,7 @@ function SearchDealRow({
     <article className="border-b border-slate-200 bg-white py-4 last:border-b-0">
       <div className="flex gap-3 sm:gap-4">
         <Link
-          href={`/deals/${row.id}`}
+          href={buildDealDetailPath(row)}
           className="relative h-[104px] w-[104px] flex-none overflow-hidden rounded-lg bg-slate-50 sm:h-[124px] sm:w-[124px]"
         >
           <img
@@ -600,7 +659,7 @@ function SearchDealRow({
 
         <div className="min-w-0 flex-1">
           <h2 className="line-clamp-2 text-[15px] font-medium leading-[1.35] text-slate-900 sm:text-[16px]">
-            <Link href={`/deals/${row.id}`} className="hover:underline">
+            <Link href={buildDealDetailPath(row)} className="cursor-pointer hover:underline">
               {row.title ?? "タイトル未設定"}
             </Link>
           </h2>
@@ -648,11 +707,11 @@ function SearchDealRow({
                   className="h-4 w-4"
                   fill={isLiked ? "currentColor" : "none"}
                 />
-                {Number(row.likes_count ?? 0)}
+                {getDealVoteScore(row)}
               </button>
 
               <Link
-                href={`/deals/${row.id}#comments`}
+                href={`${buildDealDetailPath(row)}#comments`}
                 className={
                   row.has_commented
                     ? "inline-flex items-center gap-1 text-[#006888] hover:text-[#00546d]"
@@ -732,7 +791,7 @@ function SearchDealGridCard({
   return (
     <article className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white p-3 shadow-[0_8px_18px_-10px_rgba(15,23,42,0.28)] transition hover:shadow-[0_12px_24px_-10px_rgba(15,23,42,0.34)]">
       <Link
-        href={`/deals/${row.id}`}
+        href={buildDealDetailPath(row)}
         className="relative block aspect-square w-full overflow-hidden rounded-lg bg-slate-50"
       >
         <img
@@ -751,7 +810,7 @@ function SearchDealGridCard({
 
       <div className="flex flex-1 flex-col pt-2.5">
         <h2 className="line-clamp-2 min-h-[38px] text-[14px] font-medium leading-[1.35] text-slate-900 sm:text-[15px]">
-          <Link href={`/deals/${row.id}`} className="hover:underline">
+          <Link href={buildDealDetailPath(row)} className="cursor-pointer hover:underline">
             {row.title ?? "タイトル未設定"}
           </Link>
         </h2>
@@ -798,11 +857,11 @@ function SearchDealGridCard({
               className="h-4 w-4"
               fill={isLiked ? "currentColor" : "none"}
             />
-            {Number(row.likes_count ?? 0)}
+            {getDealVoteScore(row)}
           </button>
 
           <Link
-            href={`/deals/${row.id}#comments`}
+            href={`${buildDealDetailPath(row)}#comments`}
             className={
               row.has_commented
                 ? "inline-flex items-center gap-1 text-[#006888] hover:text-[#00546d]"
@@ -1018,10 +1077,13 @@ function PageContent() {
   const q = searchParams.get("q") ?? "";
   const shouldFocusSearch = searchParams.get("focusSearch") === "1";
 
-  const handleShareDeal = useCallback(async (dealId: string, title?: string | null) => {
+  const handleShareDeal = useCallback(async (detailPath: string, title?: string | null) => {
     if (typeof window === "undefined") return;
 
-    const url = `${window.location.origin}/deals/${dealId}`;
+    const normalizedPath = detailPath.startsWith("/")
+      ? detailPath
+      : `/${detailPath}`;
+    const url = `${window.location.origin}${normalizedPath}`;
 
     try {
       if (navigator.share) {
@@ -1344,6 +1406,9 @@ function PageContent() {
 
     return (rows ?? []).map((row: any) => ({
       id: String(row.id),
+      public_id: row.public_id != null ? Number(row.public_id) : null,
+      shop_id: row.shop_id ?? null,
+      item_id: row.item_id ?? null,
       created_at: row.created_at,
       user_id: row.user_id,
       title: row.title,
@@ -1366,27 +1431,59 @@ function PageContent() {
     })) as DealsRow[];
   }, []);
 
+  const attachRoutingInfo = useCallback(async (rows: DealsRow[]) => {
+    const missingIds = Array.from(
+      new Set(
+        rows
+          .filter((row) => row.public_id == null)
+          .map((row) => row.id)
+      )
+    );
+
+    if (missingIds.length === 0) return rows;
+
+    const { data, error } = await supabase
+      .from("deals")
+      .select("id, public_id, shop_id, item_id")
+      .in("id", missingIds);
+
+    if (error) {
+      console.warn("attachRoutingInfo warn:", error);
+      return rows;
+    }
+
+    const routeById = new Map<string, any>(
+      (data ?? []).map((row: any) => [String(row.id), row])
+    );
+
+    return rows.map((row) => {
+      const route = routeById.get(row.id);
+      if (!route) return row;
+
+      return {
+        ...row,
+        public_id: route.public_id != null ? Number(route.public_id) : null,
+        shop_id: route.shop_id ?? null,
+        item_id: route.item_id ?? null,
+      };
+    });
+  }, []);
+
   const attachInteractionFlags = useCallback(
     async (rows: DealsRow[], userId: string | null) => {
       if (rows.length === 0) return rows;
 
       const ids = Array.from(new Set(rows.map((r) => r.id)));
 
-      const likesPromise = userId
-        ? supabase
-            .from("deal_likes")
-            .select("deal_id")
-            .eq("user_id", userId)
-            .in("deal_id", ids)
-        : Promise.resolve({ data: [], error: null } as any);
+      const likesPromise = supabase
+        .from("deal_likes")
+        .select("deal_id, user_id")
+        .in("deal_id", ids);
 
-      const dislikesPromise = userId
-        ? supabase
-            .from("deal_dislikes")
-            .select("deal_id")
-            .eq("user_id", userId)
-            .in("deal_id", ids)
-        : Promise.resolve({ data: [], error: null } as any);
+      const dislikesPromise = supabase
+        .from("deal_dislikes")
+        .select("deal_id, user_id")
+        .in("deal_id", ids);
 
       const savesPromise = userId
         ? supabase
@@ -1432,12 +1529,22 @@ function PageContent() {
         );
       }
 
-      const likedSet = new Set(
-        (likeRows ?? []).map((r: any) => String(r.deal_id))
-      );
-      const dislikedSet = new Set(
-        (dislikeRows ?? []).map((r: any) => String(r.deal_id))
-      );
+      const likeCountMap = new Map<string, number>();
+      const dislikeCountMap = new Map<string, number>();
+      const likedSet = new Set<string>();
+      const dislikedSet = new Set<string>();
+
+      (likeRows ?? []).forEach((r: any) => {
+        const dealId = String(r.deal_id);
+        likeCountMap.set(dealId, (likeCountMap.get(dealId) ?? 0) + 1);
+        if (userId && r.user_id === userId) likedSet.add(dealId);
+      });
+
+      (dislikeRows ?? []).forEach((r: any) => {
+        const dealId = String(r.deal_id);
+        dislikeCountMap.set(dealId, (dislikeCountMap.get(dealId) ?? 0) + 1);
+        if (userId && r.user_id === userId) dislikedSet.add(dealId);
+      });
 
       const savedSet = new Set(
         (saveRows ?? []).map((r: any) => String(r.deal_id))
@@ -1511,8 +1618,12 @@ function PageContent() {
       return rows.map((r) => {
         return {
           ...r,
-          likes_count: Number(r.likes_count ?? 0),
-          dislikes_count: Number(r.dislikes_count ?? 0),
+          likes_count: likesError
+            ? Number(r.likes_count ?? 0)
+            : likeCountMap.get(r.id) ?? 0,
+          dislikes_count: dislikesError
+            ? Number(r.dislikes_count ?? 0)
+            : dislikeCountMap.get(r.id) ?? 0,
           comments_count: Number(r.comments_count ?? 0),
           has_commented: userId ? commentedSet.has(r.id) : false,
           has_liked: Boolean(userId) && !likesError && likedSet.has(r.id),
@@ -1534,6 +1645,9 @@ function PageContent() {
         .from("deals")
         .select(`
           id,
+          public_id,
+          shop_id,
+          item_id,
           created_at,
           user_id,
           title,
@@ -1552,6 +1666,7 @@ function PageContent() {
           free_shipping,
           expires_at
         `)
+        .eq("moderation_status", "visible")
         .eq("is_expired", false)
         .order("created_at", { ascending: false })
         .limit(200);
@@ -1664,6 +1779,7 @@ function PageContent() {
         rows.length > 0 ? Number(rows[0].total_count ?? 0) : 0;
 
       let normalized = await attachAuthorUsername(rows);
+      normalized = await attachRoutingInfo(normalized);
       normalized = await attachInteractionFlags(normalized, userId);
 
       if (requestId !== searchRequestIdRef.current) return;
@@ -1675,6 +1791,7 @@ function PageContent() {
     },
     [
       attachAuthorUsername,
+      attachRoutingInfo,
       attachInteractionFlags,
       q,
       searchSort,
@@ -1884,7 +2001,8 @@ function PageContent() {
           [...popular, ...trending, ...endingSoon].map((r) => [r.id, r])
         ).values()
       );
-      const withFlags = await attachInteractionFlags(uniqueById, userId);
+      const withRoutes = await attachRoutingInfo(uniqueById);
+      const withFlags = await attachInteractionFlags(withRoutes, userId);
       const flagsById = new Map(withFlags.map((r) => [r.id, r]));
 
       const applyFlags = (rows: DealsRow[]) =>
@@ -1894,7 +2012,7 @@ function PageContent() {
       setSideTrending(applyFlags(trending));
       setSideEndingSoon(applyFlags(endingSoon));
     },
-    [attachInteractionFlags]
+    [attachInteractionFlags, attachRoutingInfo]
   );
 
   const refreshHomeData = useCallback(
@@ -2420,13 +2538,18 @@ function PageContent() {
       rows.map((r) => {
         if (r.id !== dealId) return r;
 
-        const scoreDelta = wasLiked ? -1 : wasDisliked ? 2 : 1;
-
         return {
           ...r,
           has_liked: !wasLiked,
           has_disliked: wasLiked ? r.has_disliked : false,
-          likes_count: Number(r.likes_count ?? 0) + scoreDelta,
+          likes_count: Math.max(
+            0,
+            Number(r.likes_count ?? 0) + (wasLiked ? -1 : 1)
+          ),
+          dislikes_count:
+            !wasLiked && wasDisliked
+              ? Math.max(0, Number(r.dislikes_count ?? 0) - 1)
+              : Number(r.dislikes_count ?? 0),
         };
       });
 
@@ -2500,8 +2623,6 @@ function PageContent() {
         typeof exactLikeCount === "number" &&
         typeof exactDislikeCount === "number"
       ) {
-        const exactScore = exactLikeCount - exactDislikeCount;
-
         const patchCount = (rows: DealsRow[]) =>
           rows.map((r) =>
             r.id === dealId
@@ -2509,7 +2630,7 @@ function PageContent() {
                   ...r,
                   has_liked: !wasLiked,
                   has_disliked: false,
-                  likes_count: exactScore,
+                  likes_count: exactLikeCount,
                   dislikes_count: exactDislikeCount,
                 }
               : r
@@ -2605,7 +2726,8 @@ function PageContent() {
     price: r.price ?? 0,
     market: r.market ?? "",
     imageUrl: r.image_url ?? null,
-    likes: Number(r.likes_count ?? 0),
+    detailUrl: buildDealDetailPath(r),
+    likes: getDealVoteScore(r),
     comments: Number(r.comments_count ?? 0),
     isLiked: r.has_liked === true,
     isSaved: !!r.has_saved,
@@ -3223,7 +3345,7 @@ function PageContent() {
                       onLike={() => handleLikeAny(row.id)}
                       canLike={canLike}
                       isLiked={isLiked}
-                      onSave={() => handleShareDeal(row.id, row.title)}
+                      onSave={() => handleShareDeal(buildDealDetailPath(row), row.title)}
                       canSave={canSave}
                       isSaved={isSaved}
                     />
@@ -3258,7 +3380,7 @@ function PageContent() {
                       onLike={() => handleLikeAny(row.id)}
                       canLike={canLike}
                       isLiked={isLiked}
-                      onSave={() => handleShareDeal(row.id, row.title)}
+                      onSave={() => handleShareDeal(buildDealDetailPath(row), row.title)}
                       canSave={canSave}
                       isSaved={isSaved}
                     />
@@ -3305,6 +3427,7 @@ function PageContent() {
                 {recommendMobileRows.map((row) => {
                   const cardData = {
                     id: row.id,
+                    userId: row.user_id,
                     user: row.author_username ?? "匿名ユーザー",
                     avatar: row.author_avatar_url || "/tokumikke_logo.png",
                     time: formatDealPostedAt(row.created_at),
@@ -3314,10 +3437,10 @@ function PageContent() {
                     market: row.market ?? "",
                     shopName: row.shop_name ?? "",
                     imageUrl: row.image_url ?? null,
-                    likes: Number(row.likes_count ?? 0),
+                    likes: getDealVoteScore(row),
                     comments: Number(row.comments_count ?? 0),
                     hasCommented: !!row.has_commented,
-                    detailUrl: `/deals/${row.id}`,
+                    detailUrl: buildDealDetailPath(row),
                     linkUrl: undefined,
                     category: row.category ?? null,
                     freeShipping: !!row.free_shipping,
@@ -3351,6 +3474,7 @@ function PageContent() {
               {topDealsMobileRows.map((row) => {
                 const cardData = {
                   id: row.id,
+                  userId: row.user_id,
                   user: row.author_username ?? "匿名ユーザー",
                   avatar: row.author_avatar_url || "/tokumikke_logo.png",
                   time: formatDealPostedAt(row.created_at),
@@ -3360,10 +3484,10 @@ function PageContent() {
                   market: row.market ?? "",
                   shopName: row.shop_name ?? "",
                   imageUrl: row.image_url ?? null,
-                  likes: Number(row.likes_count ?? 0),
+                  likes: getDealVoteScore(row),
                   comments: Number(row.comments_count ?? 0),
                   hasCommented: !!row.has_commented,
-                  detailUrl: `/deals/${row.id}`,
+                  detailUrl: buildDealDetailPath(row),
                   linkUrl: undefined,
                   category: row.category ?? null,
                   freeShipping: !!row.free_shipping,
@@ -3499,6 +3623,7 @@ function PageContent() {
                     {recommendFiltered.map((row) => {
                       const cardData = {
                         id: row.id,
+                        userId: row.user_id,
                         user: row.author_username ?? "匿名ユーザー",
                         avatar: row.author_avatar_url || "/tokumikke_logo.png",
                         time: formatDealPostedAt(row.created_at),
@@ -3508,10 +3633,10 @@ function PageContent() {
                         market: row.market ?? "",
                         shopName: row.shop_name ?? "",
                         imageUrl: row.image_url ?? null,
-                        likes: Number(row.likes_count ?? 0),
+                        likes: getDealVoteScore(row),
                         comments: Number(row.comments_count ?? 0),
                         hasCommented: !!row.has_commented,
-                        detailUrl: `/deals/${row.id}`,
+                        detailUrl: buildDealDetailPath(row),
                         linkUrl: undefined,
                         category: row.category ?? null,
                         freeShipping: !!row.free_shipping,
@@ -3532,7 +3657,7 @@ function PageContent() {
                             onLike={() => handleLikeAny(row.id)}
                             canLike={canLike}
                             isLiked={isLiked}
-                            onSave={() => handleShareDeal(row.id, row.title)}
+                            onSave={() => handleShareDeal(buildDealDetailPath(row), row.title)}
                             canSave={canSave}
                             isSaved={isSaved}
                           />
@@ -3564,6 +3689,7 @@ function PageContent() {
                     {topDealsForThisPageRows.map((row) => {
                       const cardData = {
                         id: row.id,
+                        userId: row.user_id,
                         user: row.author_username ?? "匿名ユーザー",
                         avatar: row.author_avatar_url || "/tokumikke_logo.png",
                         time: formatDealPostedAt(row.created_at),
@@ -3573,10 +3699,10 @@ function PageContent() {
                         market: row.market ?? "",
                         shopName: row.shop_name ?? "",
                         imageUrl: row.image_url ?? null,
-                        likes: Number(row.likes_count ?? 0),
+                        likes: getDealVoteScore(row),
                         comments: Number(row.comments_count ?? 0),
                         hasCommented: !!row.has_commented,
-                        detailUrl: `/deals/${row.id}`,
+                        detailUrl: buildDealDetailPath(row),
                         linkUrl: undefined,
                         category: row.category ?? null,
                         freeShipping: !!row.free_shipping,
@@ -3594,7 +3720,7 @@ function PageContent() {
                             onLike={() => handleLikeAny(row.id)}
                             canLike={canLike}
                             isLiked={isLiked}
-                            onSave={() => handleShareDeal(row.id, row.title)}
+                            onSave={() => handleShareDeal(buildDealDetailPath(row), row.title)}
                             canSave={canSave}
                             isSaved={isSaved}
                           />
@@ -3641,7 +3767,7 @@ function PageContent() {
                   const deal = [...sidePopularVM, ...sideTrendingVM, ...sideEndingSoonVM].find(
                     (item) => item.id === id,
                   );
-                  void handleShareDeal(id, deal?.title);
+                  void handleShareDeal(deal?.detailUrl ?? `/deals/${id}`, deal?.title);
                 }}
                 canLike={true}
                 showRank={false}
