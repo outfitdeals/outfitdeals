@@ -3,10 +3,73 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
+const PROTECTED_ADMIN_USER_ID = "1440c629-69cf-4b03-b552-22cb605a0f19";
+
+async function sendAccountDeletedEmail(
+  resendApiKey: string,
+  recipientEmail: string
+) {
+  const resendResponse = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: "トクミッケ <noreply@tokumikke.com>",
+      to: [recipientEmail],
+      subject: "【トクミッケ】アカウント削除完了のお知らせ",
+      html: `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.8;color:#0f172a;">
+          <p>トクミッケをご利用いただき、ありがとうございました。</p>
+
+          <p>アカウントの削除が完了しました。</p>
+
+          <p>
+            投稿・コメント・返信は、サイトの情報を維持するためアカウントとの紐付けを解除した状態で残ります。
+            保存・リアクションなどのアカウントデータは削除されています。
+          </p>
+
+          <p style="margin-top:28px;">
+            これまでトクミッケをご利用いただき、ありがとうございました。
+          </p>
+
+          <p style="margin-top:28px;color:#64748b;font-size:13px;">
+            トクミッケ運営
+          </p>
+        </div>
+      `,
+      text: `トクミッケをご利用いただき、ありがとうございました。
+
+アカウントの削除が完了しました。
+
+投稿・コメント・返信は、サイトの情報を維持するためアカウントとの紐付けを解除した状態で残ります。
+保存・リアクションなどのアカウントデータは削除されています。
+
+これまでトクミッケをご利用いただき、ありがとうございました。
+
+トクミッケ運営`,
+    }),
+  });
+
+  const resendResult = await resendResponse.json().catch(() => null);
+
+  if (!resendResponse.ok) {
+    console.error(
+      "delete account: confirmation email failed",
+      resendResult
+    );
+    return false;
+  }
+
+  return true;
+}
+
 export async function POST(request: Request) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const resendApiKey = process.env.RESEND_API_KEY;
 
     if (!supabaseUrl || !serviceRoleKey) {
       console.error(
@@ -53,30 +116,24 @@ export async function POST(request: Request) {
     }
 
     const userId = user.id;
+    const userEmail = user.email?.trim() ?? "";
 
     /*
-     * Avatar
-     *
-     * Current MyPage implementation stores the avatar at:
-     *
-     * avatars/{userId}/avatar.jpg
-     *
-     * Failure to remove the avatar should not leave the account undeletable.
-     * We log the error and continue with account deletion.
+     * Protect the main administrator account from self-deletion.
      */
-    const { error: avatarDeleteError } = await admin.storage
-      .from("avatars")
-      .remove([`${userId}/avatar.jpg`]);
+    if (userId === PROTECTED_ADMIN_USER_ID) {
+      console.warn(
+        "delete account: blocked deletion attempt for protected admin user"
+      );
 
-    if (avatarDeleteError) {
-      console.error(
-        "delete account: avatar deletion failed",
-        avatarDeleteError
+      return NextResponse.json(
+        { error: "This account cannot be deleted." },
+        { status: 403 }
       );
     }
 
     /*
-     * Delete the Supabase Auth user.
+     * Delete the Supabase Auth user first.
      *
      * Database foreign keys handle related records:
      *
@@ -107,7 +164,46 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ ok: true });
+    /*
+     * Remove the avatar only after the account deletion has succeeded.
+     *
+     * A storage cleanup failure must not turn a successful account deletion
+     * into a failed deletion response.
+     */
+    const { error: avatarDeleteError } = await admin.storage
+      .from("avatars")
+      .remove([`${userId}/avatar.jpg`]);
+
+    if (avatarDeleteError) {
+      console.error(
+        "delete account: avatar deletion failed",
+        avatarDeleteError
+      );
+    }
+
+    /*
+     * Send a deletion confirmation email after successful account deletion.
+     *
+     * Email delivery failure must not turn a completed account deletion
+     * into an error. The account is already gone at this point.
+     */
+    let confirmationEmailSent = false;
+
+    if (resendApiKey && userEmail) {
+      confirmationEmailSent = await sendAccountDeletedEmail(
+        resendApiKey,
+        userEmail
+      );
+    } else {
+      console.warn(
+        "delete account: confirmation email skipped because RESEND_API_KEY or user email is missing"
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      confirmationEmailSent,
+    });
   } catch (error) {
     console.error("delete account route error:", error);
 

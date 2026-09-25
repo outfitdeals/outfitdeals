@@ -1680,7 +1680,7 @@ function MyPageContent() {
       }
 
       await supabase.auth.signOut().catch(() => undefined);
-      window.location.href = "/";
+      window.location.href = "/account-deleted";
     } catch (error) {
       console.error("delete account error:", error);
       setDeleteAccountMsg(
