@@ -297,7 +297,7 @@ export default function AdminReportsPage() {
       ])
     );
 
-    const normalized: ManagedReport[] = rawReports.flatMap((report) => {
+    const normalized = rawReports.flatMap<ManagedReport>((report): ManagedReport[] => {
       if (report.comment_id) {
         const target = commentMap.get(report.comment_id);
         if (!target) return [];

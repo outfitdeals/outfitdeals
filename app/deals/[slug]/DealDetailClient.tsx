@@ -1546,13 +1546,12 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
   }, [loadComments]);
 
   const handleLike = async () => {
+    if (!deal || liking || disliking) return;
     if (deal.user_id === currentUser?.id) return;
     if (!currentUser) {
       alert("いいね機能を使うには、ログインが必要です。");
       return;
     }
-    if (!deal || liking || disliking) return;
-
     const wasLiked = !!deal.has_liked;
     const wasDisliked = !!deal.has_disliked;
 
@@ -1766,13 +1765,12 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
   };
 
   const handleBadDeal = async () => {
+    if (!deal || liking || disliking) return;
     if (deal.user_id === currentUser?.id) return;
     if (!currentUser) {
       alert("「イマイチ」に投票するには、ログインが必要です。");
       return;
     }
-    if (!deal || liking || disliking) return;
-
     const wasDisliked = !!deal.has_disliked;
     const wasLiked = !!deal.has_liked;
 
