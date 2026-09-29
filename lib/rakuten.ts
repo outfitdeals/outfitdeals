@@ -1,7 +1,6 @@
 const RAKUTEN_APP_ID = process.env.RAKUTEN_APP_ID;
 const RAKUTEN_ACCESS_KEY = process.env.RAKUTEN_ACCESS_KEY;
 const RAKUTEN_AFFILIATE_ID = process.env.RAKUTEN_AFFILIATE_ID;
-
 if (!RAKUTEN_APP_ID) {
   console.warn("[rakuten] RAKUTEN_APP_ID is not set in env.");
 }
@@ -11,15 +10,12 @@ if (!RAKUTEN_ACCESS_KEY) {
 if (!RAKUTEN_AFFILIATE_ID) {
   console.warn("[rakuten] RAKUTEN_AFFILIATE_ID is not set in env.");
 }
-
 // カード用に取得する画像サイズ
 const AFFILIATE_IMAGE_SIZE = 400;
-
 // 通信リトライ設定
 const RAKUTEN_FETCH_RETRY_COUNT = 3;
 const RAKUTEN_FETCH_TIMEOUT_MS = 8000;
 const RAKUTEN_FETCH_RETRY_DELAY_MS = 700;
-
 export type RakutenItemPreview = {
   title: string;
   price: number;
@@ -31,6 +27,22 @@ export type RakutenItemPreview = {
   itemDescription: string | null;
   endTime: string | null;
 };
+export type RakutenSaleRankingItem = {
+  rank: number;
+  itemCode: string;
+  title: string;
+  price: number;
+  imageUrl: string | null;
+  itemUrl: string;
+  affiliateUrl: string | null;
+  shopName: string;
+  shopCode: string;
+  itemId: string;
+  freeShipping: boolean | null;
+  itemDescription: string | null;
+  startTime: string;
+  endTime: string;
+};
 
 type ParsedRakutenUrl = {
   origin: string;
@@ -38,7 +50,6 @@ type ParsedRakutenUrl = {
   itemId: string;
   sourcePathSegments: string[];
 };
-
 type RakutenApiItem = {
   itemName?: string;
   itemPrice?: number | string;
@@ -50,6 +61,13 @@ type RakutenApiItem = {
   itemCaption?: string;
   endTime?: string;
 };
+type RakutenRankingApiItem = RakutenApiItem & {
+  rank?: number | string;
+  itemCode?: string;
+  affiliateUrl?: string;
+  availability?: number | string;
+  startTime?: string;
+};
 
 export function parseRakutenItemUrl(rawUrl: string): ParsedRakutenUrl {
   let url: URL;
@@ -58,20 +76,16 @@ export function parseRakutenItemUrl(rawUrl: string): ParsedRakutenUrl {
   } catch {
     throw new Error("URLの形式が不正です。");
   }
-
   if (url.hostname !== "item.rakuten.co.jp") {
     throw new Error("楽天の商品URLではありません。");
   }
-
   const segments = url.pathname.split("/").filter(Boolean);
   if (segments.length < 2) {
     throw new Error(
       "楽天の商品URLから shopCode と itemId を特定できませんでした。"
     );
   }
-
   const [shopCode, itemId] = segments;
-
   return {
     origin: `${url.protocol}//${url.host}`,
     shopCode,
@@ -79,7 +93,6 @@ export function parseRakutenItemUrl(rawUrl: string): ParsedRakutenUrl {
     sourcePathSegments: segments,
   };
 }
-
 function normalizeForCompare(v: string | undefined | null): string {
   return String(v ?? "")
     .trim()
@@ -88,13 +101,11 @@ function normalizeForCompare(v: string | undefined | null): string {
     .replace(/[%+]/g, "")
     .replace(/[-_.\s]/g, "");
 }
-
 function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
   return Array.from(
     new Set(values.map((v) => String(v ?? "").trim()).filter(Boolean))
   );
 }
-
 function buildKeywordCandidates(itemId: string): string[] {
   const base = itemId.trim();
   const hyphenToSpace = base.replace(/[-_]+/g, " ");
@@ -102,7 +113,6 @@ function buildKeywordCandidates(itemId: string): string[] {
   const parts = base.split(/[-_]+/).filter(Boolean);
   const firstTwoJoined = parts.slice(0, 2).join(" ");
   const firstThreeJoined = parts.slice(0, 3).join(" ");
-
   return uniqueNonEmpty([
     base,
     hyphenToSpace,
@@ -111,55 +121,44 @@ function buildKeywordCandidates(itemId: string): string[] {
     firstThreeJoined,
   ]);
 }
-
 function unwrapRakutenUrl(raw: string): string {
   try {
     const url = new URL(raw);
-
     const pc = url.searchParams.get("pc");
     if (pc) {
       return decodeURIComponent(pc);
     }
-
     return raw;
   } catch {
     return raw;
   }
 }
-
 function toCanonicalRakutenItemUrl(rawUrl: string): string {
   const base = unwrapRakutenUrl(rawUrl);
-
   let url: URL;
   try {
     url = new URL(base);
   } catch {
     throw new Error("楽天商品URLの整形に失敗しました。");
   }
-
   if (url.hostname !== "item.rakuten.co.jp") {
     return base;
   }
-
   const segments = url.pathname.split("/").filter(Boolean);
   if (segments.length < 2) {
     return `${url.origin}${url.pathname}`;
   }
-
   const [shopCode, itemId] = segments;
   return `${url.origin}/${shopCode}/${itemId}/`;
 }
-
 function createRakutenAffiliateImageUrl(
   rawImageUrl: string | undefined | null
 ): string | null {
   if (!rawImageUrl) return null;
-
   if (!RAKUTEN_AFFILIATE_ID) {
     console.warn("[rakuten] no AFFILIATE_ID, use raw image url.");
     return rawImageUrl;
   }
-
   let urlObj: URL;
   try {
     urlObj = new URL(rawImageUrl);
@@ -167,31 +166,23 @@ function createRakutenAffiliateImageUrl(
     console.warn("[rakuten] invalid rawImageUrl:", rawImageUrl, e);
     return null;
   }
-
   urlObj.searchParams.set(
     "_ex",
     `${AFFILIATE_IMAGE_SIZE}x${AFFILIATE_IMAGE_SIZE}`
   );
-
   const withSize = urlObj.toString();
   const encoded = encodeURIComponent(withSize);
-
   const affiliateImageUrl = `https://hbb.afl.rakuten.co.jp/hgb/${RAKUTEN_AFFILIATE_ID}/?pc=${encoded}&s=${AFFILIATE_IMAGE_SIZE}x${AFFILIATE_IMAGE_SIZE}&t=pict`;
-
   console.log("[rakuten] affiliate image url:", affiliateImageUrl);
-
   return affiliateImageUrl;
 }
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
 function isRetryableFetchError(error: any): boolean {
   const message = String(error?.message ?? "").toLowerCase();
   const causeCode = String(error?.cause?.code ?? "").toUpperCase();
   const causeMessage = String(error?.cause?.message ?? "").toLowerCase();
-
   return (
     message.includes("fetch failed") ||
     causeCode === "ECONNRESET" ||
@@ -203,27 +194,22 @@ function isRetryableFetchError(error: any): boolean {
     causeMessage.includes("timed out")
   );
 }
-
 async function fetchWithTimeoutAndRetry(url: string): Promise<Response> {
   let lastError: any = null;
-
   for (let attempt = 1; attempt <= RAKUTEN_FETCH_RETRY_COUNT; attempt++) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, RAKUTEN_FETCH_TIMEOUT_MS);
-
     try {
       const safeUrl = new URL(url);
       safeUrl.searchParams.delete("applicationId");
       safeUrl.searchParams.delete("accessKey");
       safeUrl.searchParams.delete("affiliateId");
-
       console.log(
         `[rakuten] fetch attempt ${attempt}/${RAKUTEN_FETCH_RETRY_COUNT}:`,
         safeUrl.toString()
       );
-
       const res = await fetch(url, {
         method: "GET",
         headers: {
@@ -233,9 +219,7 @@ async function fetchWithTimeoutAndRetry(url: string): Promise<Response> {
         cache: "no-store",
         signal: controller.signal,
       });
-
       clearTimeout(timeoutId);
-
       if (res.status === 429 && attempt < RAKUTEN_FETCH_RETRY_COUNT) {
         const retryAfterHeader = res.headers.get("retry-after");
         const retryAfterSeconds = Number(retryAfterHeader);
@@ -243,38 +227,29 @@ async function fetchWithTimeoutAndRetry(url: string): Promise<Response> {
           Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
             ? retryAfterSeconds * 1000
             : RAKUTEN_FETCH_RETRY_DELAY_MS * attempt;
-
         console.warn(
           `[rakuten] rate limited (429). retrying in ${retryDelayMs}ms.`
         );
-
         await sleep(retryDelayMs);
         continue;
       }
-
       return res;
     } catch (e: any) {
       clearTimeout(timeoutId);
       lastError = e;
-
       console.error(`[rakuten] fetch attempt ${attempt} failed:`, e);
       console.error("[rakuten] fetch cause:", e?.cause);
-
       const retryable =
         isRetryableFetchError(e) ||
         e?.name === "AbortError";
-
       if (!retryable || attempt === RAKUTEN_FETCH_RETRY_COUNT) {
         break;
       }
-
       await sleep(RAKUTEN_FETCH_RETRY_DELAY_MS * attempt);
     }
   }
-
   throw lastError;
 }
-
 async function searchRakutenItems(params: {
   shopCode: string;
   keyword: string;
@@ -286,11 +261,9 @@ async function searchRakutenItems(params: {
   if (!RAKUTEN_ACCESS_KEY) {
     throw new Error("RAKUTEN_ACCESS_KEY が設定されていません。");
   }
-
   const apiUrl = new URL(
     "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
   );
-
   apiUrl.searchParams.set("applicationId", RAKUTEN_APP_ID);
   apiUrl.searchParams.set("accessKey", RAKUTEN_ACCESS_KEY);
   apiUrl.searchParams.set("format", "json");
@@ -299,20 +272,16 @@ async function searchRakutenItems(params: {
   apiUrl.searchParams.set("keyword", params.keyword);
   apiUrl.searchParams.set("hits", String(params.hits ?? 30));
   apiUrl.searchParams.set("sort", "-updateTimestamp");
-
   if (RAKUTEN_AFFILIATE_ID) {
     apiUrl.searchParams.set("affiliateId", RAKUTEN_AFFILIATE_ID);
   }
-
   const debugUrl = new URL(apiUrl.toString());
   debugUrl.searchParams.set("applicationId", "***");
   debugUrl.searchParams.set("accessKey", "***");
   if (debugUrl.searchParams.has("affiliateId")) {
     debugUrl.searchParams.set("affiliateId", "***");
   }
-
   console.log("[rakuten] IchibaItem/Search request:", debugUrl.toString());
-
   let res: Response;
   try {
     res = await fetchWithTimeoutAndRetry(apiUrl.toString());
@@ -321,17 +290,13 @@ async function searchRakutenItems(params: {
     console.error("[rakuten] final fetch cause:", e?.cause);
     throw new Error("楽天APIとの通信が一時的に不安定です。もう一度お試しください。");
   }
-
   const text = await res.text();
-
   if (!res.ok) {
     console.error("[rakuten] API error:", text);
-
     try {
       const errorJson = JSON.parse(text);
       const errorCode = String(errorJson?.error ?? "");
       const errorDescription = String(errorJson?.error_description ?? "");
-
       if (
         res.status === 503 ||
         errorCode === "service_unavailable" ||
@@ -350,7 +315,6 @@ async function searchRakutenItems(params: {
         throw e;
       }
     }
-
     let detail = "";
     try {
       const errorJson = JSON.parse(text);
@@ -366,19 +330,16 @@ async function searchRakutenItems(params: {
           errorJson?.details ??
           ""
       ).trim();
-
       detail = [errorCode, errorDescription].filter(Boolean).join(": ");
     } catch {
       detail = text.trim().slice(0, 500);
     }
-
     throw new Error(
       detail
         ? `楽天APIエラー (${res.status}): ${detail}`
         : `楽天APIエラー (${res.status})`
     );
   }
-
   let json: any;
   try {
     json = JSON.parse(text);
@@ -386,22 +347,18 @@ async function searchRakutenItems(params: {
     console.error("[rakuten] JSON parse error:", e, text);
     throw new Error("楽天APIのレスポンス解析に失敗しました。");
   }
-
   const rawItems = Array.isArray(json.items)
     ? json.items
     : Array.isArray(json.Items)
     ? json.Items
     : null;
-
   if (!rawItems) {
     console.error("[rakuten] items/Items is not array:", json);
     return [];
   }
-
   const items = rawItems.map((entry: any) =>
     entry?.Item && typeof entry.Item === "object" ? entry.Item : entry
   ) as RakutenApiItem[];
-
   console.log(
     "[rakuten] result count:",
     json.count,
@@ -410,10 +367,8 @@ async function searchRakutenItems(params: {
     "keyword:",
     params.keyword
   );
-
   return items;
 }
-
 function scoreRakutenItemMatch(
   item: RakutenApiItem,
   expectedShop: string,
@@ -421,23 +376,18 @@ function scoreRakutenItemMatch(
 ): number {
   const normalizedExpectedShop = normalizeForCompare(expectedShop);
   const normalizedExpectedItemId = normalizeForCompare(expectedItemId);
-
   let score = 0;
-
   try {
     const realUrl = unwrapRakutenUrl(String(item.itemUrl ?? ""));
     const u = new URL(realUrl);
     const segs = u.pathname.split("/").filter(Boolean);
     const shopSeg = segs[0] ?? "";
     const itemSeg = segs[1] ?? "";
-
     const normalizedShopSeg = normalizeForCompare(shopSeg);
     const normalizedItemSeg = normalizeForCompare(itemSeg);
-
     if (normalizedShopSeg === normalizedExpectedShop) {
       score += 100;
     }
-
     if (normalizedItemSeg === normalizedExpectedItemId) {
       score += 1000;
     } else if (
@@ -446,7 +396,6 @@ function scoreRakutenItemMatch(
     ) {
       score += 300;
     }
-
     const fullPath = normalizeForCompare(u.pathname);
     if (fullPath.includes(normalizedExpectedShop + normalizedExpectedItemId)) {
       score += 500;
@@ -454,36 +403,29 @@ function scoreRakutenItemMatch(
   } catch (e) {
     console.warn("[rakuten] invalid itemUrl in response:", item.itemUrl, e);
   }
-
   const itemNameNorm = normalizeForCompare(item.itemName);
   if (itemNameNorm.includes(normalizedExpectedItemId)) {
     score += 120;
   }
-
   const itemIdParts = expectedItemId.split(/[-_]+/).filter(Boolean);
   const matchedParts = itemIdParts.filter((p) =>
     itemNameNorm.includes(normalizeForCompare(p))
   ).length;
-
   score += matchedParts * 20;
-
   return score;
 }
-
 function chooseBestRakutenItem(
   allItems: RakutenApiItem[],
   shopCode: string,
   itemId: string
 ): RakutenApiItem | null {
   if (allItems.length === 0) return null;
-
   const scored = allItems
     .map((item) => ({
       item,
       score: scoreRakutenItemMatch(item, shopCode, itemId),
     }))
     .sort((a, b) => b.score - a.score);
-
   console.log(
     "[rakuten] top scored candidates:",
     scored.slice(0, 5).map((x) => ({
@@ -493,15 +435,12 @@ function chooseBestRakutenItem(
       unwrappedUrl: unwrapRakutenUrl(String(x.item.itemUrl ?? "")),
     }))
   );
-
   if (scored[0].score >= 1000) {
     return scored[0].item;
   }
-
   if (scored.length === 1 && scored[0].score > 0) {
     return scored[0].item;
   }
-
   if (
     scored.length >= 2 &&
     scored[0].score >= 300 &&
@@ -509,14 +448,11 @@ function chooseBestRakutenItem(
   ) {
     return scored[0].item;
   }
-
   if (scored[0].score >= 500) {
     return scored[0].item;
   }
-
   return null;
 }
-
 /**
  * IchibaItem/Search を叩いて、指定URLに対応する商品を取得
  * 改善点:
@@ -531,30 +467,224 @@ function getRakutenImageUrl(
   if (typeof value === "string") return value;
   return value?.imageUrl;
 }
-
 function getFreeShippingFromPostageFlag(
   postageFlag: number | string | undefined
 ): boolean | null {
   if (postageFlag === undefined || postageFlag === null) {
     return null;
   }
-
   const normalized = Number(postageFlag);
-
   if (normalized === 0) return true;
   if (normalized === 1) return false;
-
   return null;
 }
-
 function cleanRakutenItemCaption(value: string | undefined | null): string | null {
   const text = String(value ?? "")
     .replace(/\r\n?|\n/g, " ")
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
     .trim();
-
   return text || null;
+}
+function parseRakutenJstDateTime(
+  value: string | undefined | null
+): number | null {
+  const match = String(value ?? "")
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second = "00"] = match;
+  const timestamp = Date.parse(
+    `${year}-${month}-${day}T${hour}:${minute}:${second}+09:00`
+  );
+
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function parseRakutenItemCode(itemCode: string): {
+  shopCode: string;
+  itemId: string;
+} | null {
+  const separatorIndex = itemCode.indexOf(":");
+
+  if (separatorIndex <= 0 || separatorIndex >= itemCode.length - 1) {
+    return null;
+  }
+
+  const shopCode = itemCode.slice(0, separatorIndex).trim();
+  const itemId = itemCode.slice(separatorIndex + 1).trim();
+
+  if (!shopCode || !itemId) return null;
+
+  return { shopCode, itemId };
+}
+
+export async function fetchCurrentRakutenSaleRankingItems(params?: {
+  maxRank?: number;
+  period?: "realtime";
+  genreId?: number;
+}): Promise<RakutenSaleRankingItem[]> {
+  if (!RAKUTEN_APP_ID) {
+    throw new Error("RAKUTEN_APP_ID が設定されていません。");
+  }
+
+  if (!RAKUTEN_ACCESS_KEY) {
+    throw new Error("RAKUTEN_ACCESS_KEY が設定されていません。");
+  }
+
+  const requestedMaxRank = Math.floor(params?.maxRank ?? 100);
+  const maxRank = Math.min(Math.max(requestedMaxRank, 1), 1000);
+  const lastPage = Math.min(Math.ceil(maxRank / 30), 34);
+  const now = Date.now();
+  const saleItems: RakutenSaleRankingItem[] = [];
+
+  for (let page = 1; page <= lastPage; page++) {
+    const apiUrl = new URL(
+      "https://openapi.rakuten.co.jp/ichibaranking/api/IchibaItem/Ranking/20220601"
+    );
+
+    apiUrl.searchParams.set("applicationId", RAKUTEN_APP_ID);
+    apiUrl.searchParams.set("accessKey", RAKUTEN_ACCESS_KEY);
+    apiUrl.searchParams.set("format", "json");
+    apiUrl.searchParams.set("formatVersion", "2");
+    apiUrl.searchParams.set("page", String(page));
+
+    if (params?.period === "realtime") {
+      apiUrl.searchParams.set("period", "realtime");
+    }
+
+    if (
+      typeof params?.genreId === "number" &&
+      Number.isInteger(params.genreId) &&
+      params.genreId > 0
+    ) {
+      apiUrl.searchParams.set("genreId", String(params.genreId));
+    }
+
+    if (RAKUTEN_AFFILIATE_ID) {
+      apiUrl.searchParams.set("affiliateId", RAKUTEN_AFFILIATE_ID);
+    }
+
+    const debugUrl = new URL(apiUrl.toString());
+    debugUrl.searchParams.set("applicationId", "***");
+    debugUrl.searchParams.set("accessKey", "***");
+
+    if (debugUrl.searchParams.has("affiliateId")) {
+      debugUrl.searchParams.set("affiliateId", "***");
+    }
+
+    console.log("[rakuten] IchibaItem/Ranking request:", debugUrl.toString());
+
+    let res: Response;
+
+    try {
+      res = await fetchWithTimeoutAndRetry(apiUrl.toString());
+    } catch (e: any) {
+      console.error("[rakuten] ranking final fetch failure:", e);
+      console.error("[rakuten] ranking final fetch cause:", e?.cause);
+      throw new Error(
+        "楽天ランキングAPIとの通信が一時的に不安定です。もう一度お試しください。"
+      );
+    }
+
+    const responseText = await res.text();
+
+    if (!res.ok) {
+      console.error("[rakuten] ranking API error:", responseText);
+
+      let detail = "";
+
+      try {
+        const errorJson = JSON.parse(responseText);
+        const errorCode = String(
+          errorJson?.error ?? errorJson?.code ?? errorJson?.status ?? ""
+        ).trim();
+        const errorDescription = String(
+          errorJson?.error_description ??
+            errorJson?.message ??
+            errorJson?.details ??
+            ""
+        ).trim();
+
+        detail = [errorCode, errorDescription].filter(Boolean).join(": ");
+      } catch {
+        detail = responseText.trim().slice(0, 500);
+      }
+
+      throw new Error(
+        detail
+          ? `楽天ランキングAPIエラー (${res.status}): ${detail}`
+          : `楽天ランキングAPIエラー (${res.status})`
+      );
+    }
+
+    let json: any;
+
+    try {
+      json = JSON.parse(responseText);
+    } catch (e) {
+      console.error("[rakuten] ranking JSON parse error:", e, responseText);
+      throw new Error("楽天ランキングAPIのレスポンス解析に失敗しました。");
+    }
+
+    const rawItems = Array.isArray(json.items)
+      ? json.items
+      : Array.isArray(json.Items)
+      ? json.Items
+      : [];
+
+    const items = rawItems.map((entry: any) =>
+      entry?.Item && typeof entry.Item === "object" ? entry.Item : entry
+    ) as RakutenRankingApiItem[];
+
+    for (const item of items) {
+      const rank = Number(item.rank);
+
+      if (!Number.isFinite(rank) || rank < 1 || rank > maxRank) continue;
+      if (Number(item.availability) !== 1) continue;
+
+      const startTime = String(item.startTime ?? "").trim();
+      const endTime = String(item.endTime ?? "").trim();
+
+      if (!startTime || !endTime) continue;
+
+      const startAt = parseRakutenJstDateTime(startTime);
+      const endAt = parseRakutenJstDateTime(endTime);
+
+      if (startAt === null || endAt === null) continue;
+      if (now < startAt || now >= endAt) continue;
+
+      const itemCode = String(item.itemCode ?? "").trim();
+      const parsedItemCode = parseRakutenItemCode(itemCode);
+
+      if (!parsedItemCode) continue;
+
+      const rawImageUrl =
+        getRakutenImageUrl(item.mediumImageUrls?.[0]) ??
+        getRakutenImageUrl(item.smallImageUrls?.[0]);
+
+      saleItems.push({
+        rank,
+        itemCode,
+        title: String(item.itemName ?? ""),
+        price: Number(item.itemPrice) || 0,
+        imageUrl: createRakutenAffiliateImageUrl(rawImageUrl),
+        itemUrl: String(item.itemUrl ?? ""),
+        affiliateUrl: String(item.affiliateUrl ?? "").trim() || null,
+        shopName: String(item.shopName ?? ""),
+        shopCode: parsedItemCode.shopCode,
+        itemId: parsedItemCode.itemId,
+        freeShipping: getFreeShippingFromPostageFlag(item.postageFlag),
+        itemDescription: cleanRakutenItemCaption(item.itemCaption),
+        startTime,
+        endTime,
+      });
+    }
+  }
+
+  return saleItems.sort((a, b) => a.rank - b.rank);
 }
 
 export async function fetchRakutenItemByUrl(
@@ -566,35 +696,28 @@ export async function fetchRakutenItemByUrl(
   if (!RAKUTEN_ACCESS_KEY) {
     throw new Error("RAKUTEN_ACCESS_KEY が設定されていません。");
   }
-
   const { shopCode, itemId } = parseRakutenItemUrl(rawUrl);
   const keywords = buildKeywordCandidates(itemId);
-
   console.log("[rakuten] parsed url:", {
     shopCode,
     itemId,
     keywords,
   });
-
   let allCandidates: RakutenApiItem[] = [];
-
   for (const keyword of keywords) {
     const items = await searchRakutenItems({
       shopCode,
       keyword,
       hits: 30,
     });
-
     if (items.length > 0) {
       allCandidates = [...allCandidates, ...items];
-
       const chosen = chooseBestRakutenItem(allCandidates, shopCode, itemId);
       if (chosen) {
         console.log("[rakuten] chosen by keyword:", keyword, {
           itemUrl: chosen.itemUrl,
           unwrappedUrl: unwrapRakutenUrl(String(chosen.itemUrl ?? "")),
         });
-
         console.log("[rakuten] chosen itemCaption:", {
           type: typeof chosen.itemCaption,
           length:
@@ -603,16 +726,13 @@ export async function fetchRakutenItemByUrl(
               : null,
           value: chosen.itemCaption ?? null,
         });
-
         console.log(
           "[rakuten] cleaned itemDescription:",
           cleanRakutenItemCaption(chosen.itemCaption)
         );
-
         const rawImageUrl =
           getRakutenImageUrl(chosen.mediumImageUrls?.[0]) ??
           getRakutenImageUrl(chosen.smallImageUrls?.[0]);
-
         return {
           title: String(chosen.itemName ?? ""),
           price: Number(chosen.itemPrice) || 0,
@@ -629,15 +749,12 @@ export async function fetchRakutenItemByUrl(
       }
     }
   }
-
   const deduped = Array.from(
     new Map(
       allCandidates.map((item) => [String(item.itemUrl ?? Math.random()), item])
     ).values()
   );
-
   const finalChosen = chooseBestRakutenItem(deduped, shopCode, itemId);
-
   if (!finalChosen) {
     console.error("[rakuten] no matched item. final candidates:", {
       shopCode,
@@ -651,11 +768,9 @@ export async function fetchRakutenItemByUrl(
     });
     throw new Error("楽天の商品が見つかりませんでした。");
   }
-
   const rawImageUrl =
     getRakutenImageUrl(finalChosen.mediumImageUrls?.[0]) ??
     getRakutenImageUrl(finalChosen.smallImageUrls?.[0]);
-
   const preview: RakutenItemPreview = {
     title: String(finalChosen.itemName ?? ""),
     price: Number(finalChosen.itemPrice) || 0,
@@ -669,7 +784,6 @@ export async function fetchRakutenItemByUrl(
     itemDescription: cleanRakutenItemCaption(finalChosen.itemCaption),
     endTime: String(finalChosen.endTime ?? "").trim() || null,
   };
-
   console.log("[rakuten] final preview:", {
     title: preview.title,
     price: preview.price,
@@ -678,27 +792,20 @@ export async function fetchRakutenItemByUrl(
     imageUrl: preview.imageUrl,
     freeShipping: preview.freeShipping,
   });
-
   return preview;
 }
-
 export function createRakutenAffiliateLinkByUrl(itemUrl: string): string {
   if (!RAKUTEN_AFFILIATE_ID) {
     throw new Error(
       "RAKUTEN_AFFILIATE_ID が設定されていないため、楽天アフィリエイトリンクを生成できません。"
     );
   }
-
   const canonicalUrl = toCanonicalRakutenItemUrl(itemUrl);
   const encoded = encodeURIComponent(canonicalUrl);
-
   const affiliateUrl = `https://hb.afl.rakuten.co.jp/hgc/${RAKUTEN_AFFILIATE_ID}/?pc=${encoded}&m=${encoded}`;
-
   console.log("[rakuten] affiliate deal url:", affiliateUrl);
-
   return affiliateUrl;
 }
-
 export async function fetchRakutenPreviewByUrl(
   rawUrl: string
 ): Promise<RakutenItemPreview> {
