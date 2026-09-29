@@ -4,8 +4,8 @@ import { CheckCircle2 } from "lucide-react";
 
 export default function AccountDeletedPage() {
   return (
-    <div className="min-h-screen bg-[#f7f8fa]">
-      <main className="mx-auto flex min-h-screen w-full max-w-[760px] items-center justify-center px-4 py-12 sm:px-6">
+    <div className="bg-[#f7f8fa]">
+      <main className="mx-auto w-full max-w-[760px] px-4 pb-12 pt-10 sm:px-6 sm:pb-16 sm:pt-20">
         <section className="w-full rounded-2xl border border-slate-200 bg-white px-6 py-10 text-center shadow-sm sm:px-10 sm:py-14">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#006888]/10">
             <CheckCircle2

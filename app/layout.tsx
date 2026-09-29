@@ -46,21 +46,25 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ja" className="bg-[#f7f8fa]">
+    <html lang="ja" className="h-full bg-[#f7f8fa]">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-[#f7f8fa] antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} flex min-h-full flex-col bg-[#f7f8fa] antialiased`}
       >
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteStructuredData) }}
         />
+
         <Suspense fallback={null}>
           <SiteHeader />
         </Suspense>
-        <div className="pb-[calc(72px+env(safe-area-inset-bottom))] md:pb-0">
-          {children}
+
+        <div className="flex flex-1 flex-col pb-[calc(72px+env(safe-area-inset-bottom))] md:pb-0">
+          <main className="flex-1">{children}</main>
+
           <SiteFooter />
         </div>
+
         <Suspense fallback={null}>
           <MobileBottomNav />
         </Suspense>

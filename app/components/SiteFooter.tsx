@@ -12,13 +12,13 @@ const links = [
 
 export default function SiteFooter() {
   return (
-    <footer className="mt-12 border-t border-slate-200 bg-white">
+    <footer className="border-t border-slate-200 bg-white">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col items-center gap-5">
           <Link
             href="/"
             aria-label="トクミッケ ホーム"
-            className="transition-opacity hover:opacity-75"
+            className="cursor-pointer transition-opacity hover:opacity-75"
           >
             <Image
               src="/tokumikke_logo.png"
@@ -37,7 +37,7 @@ export default function SiteFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="transition-colors hover:text-[#006888]"
+                className="cursor-pointer transition-colors hover:text-[#006888]"
               >
                 {link.label}
               </Link>
