@@ -8,9 +8,13 @@ type Market = "楽天市場" | "Yahoo!ショッピング" | "ZOZOTOWN" | "";
 type DealCategory =
   | "fashion_women"
   | "fashion_men"
+  | "food"
   | "beauty"
   | "home"
+  | "interior"
   | "electronics"
+  | "sports"
+  | "shoes"
   | "other";
 
 function normalizeText(value: string) {
@@ -1299,9 +1303,13 @@ function PostPageContent() {
               </option>
               <option value="fashion_women">レディースファッション</option>
               <option value="fashion_men">メンズファッション</option>
+              <option value="food">食品・飲料</option>
               <option value="beauty">ビューティー</option>
               <option value="home">日用品・ホーム</option>
+              <option value="interior">インテリア・家具</option>
               <option value="electronics">家電・ガジェット</option>
+              <option value="sports">スポーツ・アウトドア</option>
+              <option value="shoes">靴・シューズ</option>
               <option value="other">その他</option>
             </select>
             {showValidationErrors && !category ? (

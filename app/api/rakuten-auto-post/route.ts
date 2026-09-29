@@ -7,6 +7,7 @@ import {
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const MAX_RANK = 100;
 const OPENAI_MODEL = "gpt-5-nano";
@@ -30,6 +31,10 @@ type DealCategory =
   | "beauty"
   | "home"
   | "electronics"
+  | "food"
+  | "sports"
+  | "interior"
+  | "shoes"
   | "other";
 
 type RankedSaleItem = RakutenSaleRankingItem & {
@@ -102,9 +107,13 @@ function inferCategory(item: RankedSaleItem): DealCategory {
 
   if (sourceKeys.has("ladies")) return "fashion_women";
   if (sourceKeys.has("mens")) return "fashion_men";
-  if (sourceKeys.has("beauty")) return "beauty";
+  if (sourceKeys.has("food")) return "food";
   if (sourceKeys.has("appliances")) return "electronics";
-  if (sourceKeys.has("daily") || sourceKeys.has("interior")) return "home";
+  if (sourceKeys.has("beauty")) return "beauty";
+  if (sourceKeys.has("daily")) return "home";
+  if (sourceKeys.has("sports")) return "sports";
+  if (sourceKeys.has("interior")) return "interior";
+  if (sourceKeys.has("shoes")) return "shoes";
 
   const merged = normalizeText(
     `${item.title ?? ""} ${item.shopName ?? ""} ${item.itemUrl ?? ""}`
@@ -282,6 +291,7 @@ export async function GET(request: NextRequest) {
   }
 
   const startedAt = Date.now();
+  const SAFE_EXECUTION_MS = 240_000;
 
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -345,291 +355,274 @@ export async function GET(request: NextRequest) {
       return a.itemCode.localeCompare(b.itemCode);
     });
 
-    let selectedItem: RankedSaleItem | null = null;
-    let selectedStartIso = "";
-    let selectedEndIso = "";
-    let selectedComment = "";
     let duplicateCount = 0;
     let aiFailureCount = 0;
+    let postFailureCount = 0;
+    let postedCount = 0;
+    let stoppedForTime = false;
+
+    const createdDeals: Array<{
+      id: string;
+      publicId: number;
+      dealNumber: number;
+      path: string;
+      itemCode: string;
+      category: DealCategory;
+    }> = [];
 
     for (const item of candidates) {
-      const startIso = rakutenJapanTimeToIso(item.startTime);
-      const endIso = rakutenJapanTimeToIso(item.endTime);
-
-      const { data: existingDeal, error: duplicateLookupError } = await admin
-        .from("deals")
-        .select("id")
-        .eq("market_code", "rk")
-        .eq("shop_id", item.shopCode)
-        .eq("item_id", item.itemId)
-        .eq("source_sale_started_at", startIso)
-        .eq("source_sale_ends_at", endIso)
-        .limit(1)
-        .maybeSingle();
-
-      if (duplicateLookupError) {
-        throw new Error(
-          `重複確認に失敗しました: ${duplicateLookupError.message}`
-        );
+      if (Date.now() - startedAt >= SAFE_EXECUTION_MS) {
+        stoppedForTime = true;
+        break;
       }
-
-      if (existingDeal) {
-        duplicateCount += 1;
-        continue;
-      }
-
-      let generatedComment = "";
 
       try {
-        generatedComment = await generateAiComment(item);
-      } catch (error) {
-        aiFailureCount += 1;
-        console.error(
-          `[rakuten-auto-post] AI comment generation failed for ${item.itemCode}. Skipping candidate.`,
-          error
-        );
-        continue;
-      }
+        const startIso = rakutenJapanTimeToIso(item.startTime);
+        const endIso = rakutenJapanTimeToIso(item.endTime);
 
-      selectedItem = item;
-      selectedStartIso = startIso;
-      selectedEndIso = endIso;
-      selectedComment = generatedComment;
-      break;
-    }
+        const { data: existingDeal, error: duplicateLookupError } = await admin
+          .from("deals")
+          .select("id")
+          .eq("market_code", "rk")
+          .eq("shop_id", item.shopCode)
+          .eq("item_id", item.itemId)
+          .eq("source_sale_started_at", startIso)
+          .eq("source_sale_ends_at", endIso)
+          .limit(1)
+          .maybeSingle();
 
-    if (!selectedItem) {
-      const noNewCandidate = duplicateCount === candidates.length;
-
-      return NextResponse.json(
-        {
-          ok: true,
-          posted: false,
-          reason: noNewCandidate
-            ? "NO_NEW_CANDIDATE"
-            : "NO_AI_COMMENT_CANDIDATE",
-          candidateCount: candidates.length,
-          duplicateCount,
-          aiFailureCount,
-          elapsedMs: Date.now() - startedAt,
-          message: noNewCandidate
-            ? "現在の候補はすべて同一セール期間ですでに投稿済みです。"
-            : "未投稿候補はありましたが、AIコメントを生成できる商品がありませんでした。",
-        },
-        {
-          status: 200,
-          headers: { "Cache-Control": "no-store" },
+        if (duplicateLookupError) {
+          throw new Error(`重複確認に失敗しました: ${duplicateLookupError.message}`);
         }
-      );
-    }
 
-    const comment = selectedComment;
-    const category = inferCategory(selectedItem);
+        if (existingDeal) {
+          duplicateCount += 1;
+          continue;
+        }
 
-    const { data: latestSameProductDeal, error: dealNumberError } = await admin
-      .from("deals")
-      .select("deal_number")
-      .eq("market_code", "rk")
-      .eq("shop_id", selectedItem.shopCode)
-      .eq("item_id", selectedItem.itemId)
-      .order("deal_number", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+        let comment = "";
 
-    if (dealNumberError) {
-      throw new Error(`ディール番号の確認に失敗しました: ${dealNumberError.message}`);
-    }
+        try {
+          comment = await generateAiComment(item);
+        } catch (error) {
+          aiFailureCount += 1;
+          console.error(
+            `[rakuten-auto-post] AI comment generation failed for ${item.itemCode}. Skipping candidate.`,
+            error
+          );
+          continue;
+        }
 
-    let assignedDealNumber = (latestSameProductDeal?.deal_number ?? 0) + 1;
+        if (Date.now() - startedAt >= SAFE_EXECUTION_MS) {
+          stoppedForTime = true;
+          break;
+        }
 
-    const sourceUrl = selectedItem.itemUrl;
+        const category = inferCategory(item);
 
-    if (!sourceUrl) {
-      throw new Error("楽天の商品URLを取得できませんでした。");
-    }
-
-    const affiliateResponse = await fetch(
-      new URL("/api/rakuten-affiliate", request.url),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ url: sourceUrl }),
-        cache: "no-store",
-      }
-    );
-
-    const affiliateText = await affiliateResponse.text();
-
-    if (!affiliateResponse.ok) {
-      let message = "アフィリエイトURLの生成に失敗しました。";
-
-      try {
-        const parsed = JSON.parse(affiliateText);
-        if (parsed?.error) message = String(parsed.error);
-      } catch {
-        // JSON でない場合は既定メッセージを使用する
-      }
-
-      throw new Error(message);
-    }
-
-    let affiliateData: any;
-
-    try {
-      affiliateData = JSON.parse(affiliateText);
-    } catch {
-      throw new Error("アフィリエイトURLの応答を解析できませんでした。");
-    }
-
-    const finalDealUrl =
-      typeof affiliateData?.affiliateUrl === "string"
-        ? affiliateData.affiliateUrl.trim()
-        : "";
-
-    if (!finalDealUrl) {
-      throw new Error("アフィリエイトURLの生成に失敗しました。");
-    }
-
-    let createdDeal: { id: string; public_id: number } | null = null;
-    let lastInsertError: any = null;
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const result = await admin
-        .from("deals")
-        .insert({
-          user_id: adminUserId,
-          title: selectedItem.title,
-          price: selectedItem.price,
-          orig_price: null,
-          market: "楽天市場",
-          market_code: "rk",
-          shop_id: selectedItem.shopCode,
-          item_id: selectedItem.itemId,
-          shop_name: selectedItem.shopName || null,
-          source_url: sourceUrl,
-          deal_url: finalDealUrl,
-          image_url: selectedItem.imageUrl || null,
-          comment,
-          item_description: selectedItem.itemDescription || null,
-          category,
-          brand: null,
-          free_shipping: selectedItem.freeShipping,
-          expires_at: selectedEndIso,
-          source_sale_started_at: selectedStartIso,
-          source_sale_ends_at: selectedEndIso,
-          deal_number: assignedDealNumber,
-          likes_count: 0,
-          comments_count: 0,
-        })
-        .select("id, public_id")
-        .single();
-
-      createdDeal = result.data;
-      lastInsertError = result.error;
-
-      if (!lastInsertError && createdDeal?.id) {
-        break;
-      }
-
-      if (lastInsertError?.code !== "23505") {
-        break;
-      }
-
-      const { data: sameSaleDeal, error: sameSaleLookupError } = await admin
-        .from("deals")
-        .select("id, public_id")
-        .eq("market_code", "rk")
-        .eq("shop_id", selectedItem.shopCode)
-        .eq("item_id", selectedItem.itemId)
-        .eq("source_sale_started_at", selectedStartIso)
-        .eq("source_sale_ends_at", selectedEndIso)
-        .limit(1)
-        .maybeSingle();
-
-      if (sameSaleLookupError) {
-        throw new Error(
-          `同時投稿後の重複確認に失敗しました: ${sameSaleLookupError.message}`
-        );
-      }
-
-      if (sameSaleDeal) {
-        return NextResponse.json(
-          {
-            ok: true,
-            posted: false,
-            reason: "DUPLICATE_CREATED_CONCURRENTLY",
-            candidateCount: candidates.length,
-            duplicateCount: duplicateCount + 1,
-            elapsedMs: Date.now() - startedAt,
-            existingDeal: sameSaleDeal,
-          },
-          {
-            status: 200,
-            headers: { "Cache-Control": "no-store" },
-          }
-        );
-      }
-
-      const { data: latestDealAfterConflict, error: retryLookupError } =
-        await admin
+        const { data: latestSameProductDeal, error: dealNumberError } = await admin
           .from("deals")
           .select("deal_number")
           .eq("market_code", "rk")
-          .eq("shop_id", selectedItem.shopCode)
-          .eq("item_id", selectedItem.itemId)
+          .eq("shop_id", item.shopCode)
+          .eq("item_id", item.itemId)
           .order("deal_number", { ascending: false })
           .limit(1)
           .maybeSingle();
 
-      if (retryLookupError) {
-        throw new Error(
-          `ディール番号の再確認に失敗しました: ${retryLookupError.message}`
+        if (dealNumberError) {
+          throw new Error(`ディール番号の確認に失敗しました: ${dealNumberError.message}`);
+        }
+
+        let assignedDealNumber = (latestSameProductDeal?.deal_number ?? 0) + 1;
+        const sourceUrl = item.itemUrl;
+
+        if (!sourceUrl) {
+          throw new Error("楽天の商品URLを取得できませんでした。");
+        }
+
+        const affiliateResponse = await fetch(
+          new URL("/api/rakuten-affiliate", request.url),
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ url: sourceUrl }),
+            cache: "no-store",
+          }
+        );
+
+        const affiliateText = await affiliateResponse.text();
+
+        if (!affiliateResponse.ok) {
+          let message = "アフィリエイトURLの生成に失敗しました。";
+
+          try {
+            const parsed = JSON.parse(affiliateText);
+            if (parsed?.error) message = String(parsed.error);
+          } catch {
+            // JSON でない場合は既定メッセージを使用する
+          }
+
+          throw new Error(message);
+        }
+
+        let affiliateData: any;
+
+        try {
+          affiliateData = JSON.parse(affiliateText);
+        } catch {
+          throw new Error("アフィリエイトURLの応答を解析できませんでした。");
+        }
+
+        const finalDealUrl =
+          typeof affiliateData?.affiliateUrl === "string"
+            ? affiliateData.affiliateUrl.trim()
+            : "";
+
+        if (!finalDealUrl) {
+          throw new Error("アフィリエイトURLの生成に失敗しました。");
+        }
+
+        let createdDeal: { id: string; public_id: number } | null = null;
+        let lastInsertError: any = null;
+        let duplicateCreatedConcurrently = false;
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const result = await admin
+            .from("deals")
+            .insert({
+              user_id: adminUserId,
+              title: item.title,
+              price: item.price,
+              orig_price: null,
+              market: "楽天市場",
+              market_code: "rk",
+              shop_id: item.shopCode,
+              item_id: item.itemId,
+              shop_name: item.shopName || null,
+              source_url: sourceUrl,
+              deal_url: finalDealUrl,
+              image_url: item.imageUrl || null,
+              comment,
+              item_description: item.itemDescription || null,
+              category,
+              brand: null,
+              free_shipping: item.freeShipping,
+              expires_at: endIso,
+              source_sale_started_at: startIso,
+              source_sale_ends_at: endIso,
+              deal_number: assignedDealNumber,
+              likes_count: 0,
+              comments_count: 0,
+            })
+            .select("id, public_id")
+            .single();
+
+          createdDeal = result.data;
+          lastInsertError = result.error;
+
+          if (!lastInsertError && createdDeal?.id) {
+            break;
+          }
+
+          if (lastInsertError?.code !== "23505") {
+            break;
+          }
+
+          const { data: sameSaleDeal, error: sameSaleLookupError } = await admin
+            .from("deals")
+            .select("id")
+            .eq("market_code", "rk")
+            .eq("shop_id", item.shopCode)
+            .eq("item_id", item.itemId)
+            .eq("source_sale_started_at", startIso)
+            .eq("source_sale_ends_at", endIso)
+            .limit(1)
+            .maybeSingle();
+
+          if (sameSaleLookupError) {
+            throw new Error(
+              `同時投稿後の重複確認に失敗しました: ${sameSaleLookupError.message}`
+            );
+          }
+
+          if (sameSaleDeal) {
+            duplicateCount += 1;
+            duplicateCreatedConcurrently = true;
+            break;
+          }
+
+          const { data: latestDealAfterConflict, error: retryLookupError } =
+            await admin
+              .from("deals")
+              .select("deal_number")
+              .eq("market_code", "rk")
+              .eq("shop_id", item.shopCode)
+              .eq("item_id", item.itemId)
+              .order("deal_number", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+          if (retryLookupError) {
+            throw new Error(
+              `ディール番号の再確認に失敗しました: ${retryLookupError.message}`
+            );
+          }
+
+          assignedDealNumber =
+            (latestDealAfterConflict?.deal_number ?? assignedDealNumber) + 1;
+        }
+
+        if (duplicateCreatedConcurrently) {
+          continue;
+        }
+
+        if (lastInsertError || !createdDeal?.id) {
+          throw new Error(
+            `自動投稿の保存に失敗しました: ${
+              lastInsertError?.message ?? "unknown insert error"
+            }`
+          );
+        }
+
+        postedCount += 1;
+        createdDeals.push({
+          id: createdDeal.id,
+          publicId: createdDeal.public_id,
+          dealNumber: assignedDealNumber,
+          path: `/deals/${createdDeal.public_id}-${item.shopCode}-${item.itemId}`,
+          itemCode: item.itemCode,
+          category,
+        });
+      } catch (error) {
+        postFailureCount += 1;
+        console.error(
+          `[rakuten-auto-post] candidate processing failed for ${item.itemCode}. Skipping candidate.`,
+          error
         );
       }
-
-      assignedDealNumber =
-        (latestDealAfterConflict?.deal_number ?? assignedDealNumber) + 1;
-    }
-
-    if (lastInsertError || !createdDeal?.id) {
-      throw new Error(
-        `自動投稿の保存に失敗しました: ${
-          lastInsertError?.message ?? "unknown insert error"
-        }`
-      );
     }
 
     return NextResponse.json(
       {
         ok: true,
-        posted: true,
+        posted: postedCount > 0,
         model: OPENAI_MODEL,
         elapsedMs: Date.now() - startedAt,
         candidateCount: candidates.length,
+        postedCount,
         duplicateCount,
-        createdDeal: {
-          id: createdDeal.id,
-          publicId: createdDeal.public_id,
-          dealNumber: assignedDealNumber,
-          path: `/deals/${createdDeal.public_id}-${selectedItem.shopCode}-${selectedItem.itemId}`,
-        },
-        postedItem: {
-          rank: selectedItem.rank,
-          itemCode: selectedItem.itemCode,
-          title: selectedItem.title,
-          price: selectedItem.price,
-          shopName: selectedItem.shopName,
-          shopCode: selectedItem.shopCode,
-          itemId: selectedItem.itemId,
-          category,
-          freeShipping: selectedItem.freeShipping,
-          startTime: selectedItem.startTime,
-          endTime: selectedItem.endTime,
-          rankingSources: selectedItem.rankingSources,
-        },
-        generatedComment: comment,
+        aiFailureCount,
+        postFailureCount,
+        stoppedForTime,
+        createdDeals,
+        message: stoppedForTime
+          ? "安全な実行時間に達したため正常終了しました。次回実行時に未投稿候補から続行します。"
+          : postedCount > 0
+            ? `${postedCount}件の楽天ディールを自動投稿しました。`
+            : "今回新たに投稿できる楽天ディールはありませんでした。",
       },
       {
         status: 200,
