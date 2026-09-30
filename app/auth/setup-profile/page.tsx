@@ -100,8 +100,8 @@ export default function SetupProfilePage() {
     const acceptedAt = consentAt || new Date().toISOString();
     const trimmed = username.trim();
 
-    if (trimmed.length < 2 || trimmed.length > 20) {
-      setMessage("ユーザー名は2〜20文字にしてください。");
+    if (trimmed.length < 2 || trimmed.length > 10) {
+      setMessage("ユーザー名は2〜10文字にしてください。");
       return;
     }
 
@@ -208,15 +208,17 @@ export default function SetupProfilePage() {
               autoComplete="username"
               autoFocus
               required
+              minLength={2}
+              maxLength={10}
               onInvalid={(e) =>
                 e.currentTarget.setCustomValidity(
-                  "ユーザー名を入力してください。"
+                  "ユーザー名は2〜10文字で入力してください。"
                 )
               }
               onInput={(e) => e.currentTarget.setCustomValidity("")}
             />
             <p className="mt-1 text-xs text-slate-500">
-              コメントなどに表示される名前です。（2〜20文字）
+              コメントなどに表示される名前です。（2〜10文字）
             </p>
             <p className="mt-1 text-xs font-semibold text-amber-700">
               ※ ユーザー名は登録後も変更できます。変更後90日間は再変更できません。

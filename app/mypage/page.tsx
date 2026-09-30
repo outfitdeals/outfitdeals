@@ -1487,8 +1487,8 @@ function MyPageContent() {
 
     setUsernameMsg(null);
 
-    if (nextUsername.length < 2 || nextUsername.length > 20) {
-      setUsernameMsg("ユーザー名は2〜20文字で入力してください。");
+    if (nextUsername.length < 2 || nextUsername.length > 10) {
+      setUsernameMsg("ユーザー名は2〜10文字で入力してください。");
       return;
     }
 
@@ -3168,7 +3168,7 @@ function MyPageContent() {
                         setUsernameDraft(e.target.value);
                         setUsernameMsg(null);
                       }}
-                      maxLength={20}
+                      maxLength={10}
                       disabled={!canChangeUsername || savingUsername}
                       className="w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#006888] focus:ring-2 focus:ring-[#006888]/15 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                       aria-label="ユーザー名"
