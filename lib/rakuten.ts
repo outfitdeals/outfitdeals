@@ -486,7 +486,7 @@ function cleanRakutenItemCaption(value: string | undefined | null): string | nul
     .trim();
   return text || null;
 }
-function parseRakutenJstDateTime(
+function parseRakutenUtcDateTime(
   value: string | undefined | null
 ): number | null {
   const match = String(value ?? "")
@@ -497,10 +497,22 @@ function parseRakutenJstDateTime(
 
   const [, year, month, day, hour, minute, second = "00"] = match;
   const timestamp = Date.parse(
-    `${year}-${month}-${day}T${hour}:${minute}:${second}+09:00`
+    `${year}-${month}-${day}T${hour}:${minute}:${second}Z`
   );
 
   return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function formatRakutenUtcAsJstDateTime(timestamp: number): string {
+  const jst = new Date(timestamp + 9 * 60 * 60 * 1000);
+  const year = jst.getUTCFullYear();
+  const month = String(jst.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(jst.getUTCDate()).padStart(2, "0");
+  const hour = String(jst.getUTCHours()).padStart(2, "0");
+  const minute = String(jst.getUTCMinutes()).padStart(2, "0");
+  const second = String(jst.getUTCSeconds()).padStart(2, "0");
+
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
 function parseRakutenItemCode(itemCode: string): {
@@ -650,8 +662,8 @@ export async function fetchCurrentRakutenSaleRankingItems(params?: {
 
       if (!startTime || !endTime) continue;
 
-      const startAt = parseRakutenJstDateTime(startTime);
-      const endAt = parseRakutenJstDateTime(endTime);
+      const startAt = parseRakutenUtcDateTime(startTime);
+      const endAt = parseRakutenUtcDateTime(endTime);
 
       if (startAt === null || endAt === null) continue;
       if (now < startAt || now >= endAt) continue;
@@ -678,8 +690,8 @@ export async function fetchCurrentRakutenSaleRankingItems(params?: {
         itemId: parsedItemCode.itemId,
         freeShipping: getFreeShippingFromPostageFlag(item.postageFlag),
         itemDescription: cleanRakutenItemCaption(item.itemCaption),
-        startTime,
-        endTime,
+        startTime: formatRakutenUtcAsJstDateTime(startAt),
+        endTime: formatRakutenUtcAsJstDateTime(endAt),
       });
     }
   }
