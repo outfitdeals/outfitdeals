@@ -1,0 +1,8 @@
+﻿{
+  "crons": [
+    {
+      "path": "/api/rakuten-auto-post",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}
