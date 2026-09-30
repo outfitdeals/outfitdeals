@@ -45,6 +45,7 @@ type ProfileRow = {
   id: string;
   username: string | null;
   avatar_url: string | null;
+  avatar_updated_at: string | null;
 };
 
 type SidebarRpcRow = {
@@ -1389,7 +1390,7 @@ function PageContent() {
     if (userIds.length > 0) {
       const { data: profilesData, error: profilesError } = await supabase
         .from("profiles")
-        .select("id, username, avatar_url")
+        .select("id, username, avatar_url, avatar_updated_at")
         .in("id", userIds);
 
       if (profilesError) {
@@ -1399,7 +1400,17 @@ function PageContent() {
           (profilesData ?? []).map((p: ProfileRow) => [p.id, p.username])
         );
         avatarMap = Object.fromEntries(
-          (profilesData ?? []).map((p: ProfileRow) => [p.id, p.avatar_url])
+          (profilesData ?? []).map((p: ProfileRow) => {
+            if (!p.avatar_url || !p.avatar_updated_at) {
+              return [p.id, p.avatar_url];
+            }
+
+            const separator = p.avatar_url.includes("?") ? "&" : "?";
+            return [
+              p.id,
+              `${p.avatar_url}${separator}v=${encodeURIComponent(p.avatar_updated_at)}`,
+            ];
+          })
         );
       }
     }

@@ -50,11 +50,14 @@ export default function AuthCallbackPage() {
       // OAuthプロバイダー側にアバターがあり、profiles側が空の場合は自動補完する。
       // 既存ユーザーが自分で設定したavatar_urlは上書きしない。
       if (profile && !profile.avatar_url && providerAvatar) {
+        const avatarUpdatedAt = new Date().toISOString();
+
         const { error: avatarSyncError } = await supabase
           .from("profiles")
           .update({
             avatar_url: providerAvatar,
-            updated_at: new Date().toISOString(),
+            avatar_updated_at: avatarUpdatedAt,
+            updated_at: avatarUpdatedAt,
           })
           .eq("id", user.id);
 

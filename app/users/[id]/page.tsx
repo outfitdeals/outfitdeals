@@ -15,6 +15,7 @@ type ProfileRow = {
   id: string;
   username: string | null;
   avatar_url: string | null;
+  avatar_updated_at: string | null;
   created_at: string | null;
   user_badge: string | null;
 };
@@ -235,7 +236,7 @@ export default function PublicUserPage() {
       ] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, username, avatar_url, created_at, user_badge")
+          .select("id, username, avatar_url, avatar_updated_at, created_at, user_badge")
           .eq("id", userId)
           .maybeSingle(),
         supabase
@@ -431,6 +432,7 @@ export default function PublicUserPage() {
         id: String(profileData.id),
         username: profileData.username ?? null,
         avatar_url: profileData.avatar_url ?? null,
+        avatar_updated_at: profileData.avatar_updated_at ?? null,
         created_at: profileData.created_at ?? null,
         user_badge: profileData.user_badge ?? null,
       });
@@ -554,13 +556,20 @@ export default function PublicUserPage() {
   }
 
   const username = profile.username?.trim() || "匿名ユーザー";
+  const profileAvatarUrl = profile.avatar_url
+    ? profile.avatar_updated_at
+      ? `${profile.avatar_url}${profile.avatar_url.includes("?") ? "&" : "?"}v=${encodeURIComponent(
+          profile.avatar_updated_at
+        )}`
+      : profile.avatar_url
+    : "";
 
   return (
     <main className="min-h-screen bg-[#f7f8fa]">
       <div className="mx-auto w-full max-w-[760px] px-0 pb-10 pt-0 sm:px-4 sm:pt-6">
         <section className="border-b border-slate-200 bg-white sm:rounded-xl sm:border sm:shadow-sm">
           <div className="flex items-center gap-4 px-4 py-5 sm:px-6">
-            <ProfileAvatar src={profile.avatar_url ?? ""} name={username} />
+            <ProfileAvatar src={profileAvatarUrl} name={username} />
 
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">

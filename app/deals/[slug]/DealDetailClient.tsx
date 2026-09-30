@@ -1276,7 +1276,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
     if (allUserIds.length > 0) {
       const { data: profs, error: pe } = await supabase
         .from("profiles")
-        .select("id, username, avatar_url, created_at, user_badge")
+        .select("id, username, avatar_url, avatar_updated_at, created_at, user_badge")
         .in("id", allUserIds);
 
       if (!pe) {
@@ -1284,7 +1284,20 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
           (profs ?? []).map((p: any) => [String(p.id), p.username ?? null])
         );
         avatarUrlMap = Object.fromEntries(
-          (profs ?? []).map((p: any) => [String(p.id), p.avatar_url ?? null])
+          (profs ?? []).map((p: any) => {
+            const avatarUrl = p.avatar_url?.trim() || null;
+            const avatarUpdatedAt = p.avatar_updated_at ?? null;
+
+            if (!avatarUrl || !avatarUpdatedAt) {
+              return [String(p.id), avatarUrl];
+            }
+
+            const separator = avatarUrl.includes("?") ? "&" : "?";
+            return [
+              String(p.id),
+              `${avatarUrl}${separator}v=${encodeURIComponent(avatarUpdatedAt)}`,
+            ];
+          })
         );
         joinedAtMap = Object.fromEntries(
           (profs ?? []).map((p: any) => [String(p.id), p.created_at ?? null])

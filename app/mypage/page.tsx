@@ -502,7 +502,7 @@ function MyPageContent() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("username, avatar_url, user_badge, username_changed_at")
+        .select("username, avatar_url, avatar_updated_at, user_badge, username_changed_at")
         .eq("id", data.user.id)
         .maybeSingle();
 
@@ -511,7 +511,12 @@ function MyPageContent() {
       }
 
       const initialUsername = profile?.username || meta.username || "";
-      const initialAvatar = profile?.avatar_url || "";
+      const rawInitialAvatar = profile?.avatar_url?.trim() || "";
+      const avatarUpdatedAt = profile?.avatar_updated_at ?? null;
+      const initialAvatar =
+        rawInitialAvatar && avatarUpdatedAt
+          ? `${rawInitialAvatar}${rawInitialAvatar.includes("?") ? "&" : "?"}v=${encodeURIComponent(avatarUpdatedAt)}`
+          : rawInitialAvatar;
 
       setUsername(initialUsername);
       setUsernameDraft(initialUsername);
@@ -1703,9 +1708,16 @@ function MyPageContent() {
     if (!file) return;
 
     const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    const MAX_AVATAR_FILE_SIZE = 10 * 1024 * 1024;
 
     if (!allowedTypes.includes(file.type)) {
       setAvatarMsg("JPEG / PNG / WebP の画像を選択してください。");
+      e.target.value = "";
+      return;
+    }
+
+    if (file.size > MAX_AVATAR_FILE_SIZE) {
+      setAvatarMsg("プロフィール画像は10MB以下のファイルを選択してください。");
       e.target.value = "";
       return;
     }
@@ -1744,9 +1756,14 @@ function MyPageContent() {
         return;
       }
 
+      const avatarUpdatedAt = new Date().toISOString();
+
       const { error: updateError } = await supabase
         .from("profiles")
-        .update({ avatar_url: publicUrl })
+        .update({
+          avatar_url: publicUrl,
+          avatar_updated_at: avatarUpdatedAt,
+        })
         .eq("id", user.id);
 
       if (updateError) {
@@ -1756,7 +1773,8 @@ function MyPageContent() {
         return;
       }
 
-      setAvatarUrl(publicUrl);
+      const versionedAvatarUrl = `${publicUrl}${publicUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(avatarUpdatedAt)}`;
+      setAvatarUrl(versionedAvatarUrl);
       setAvatarMsg("プロフィール写真を更新しました。");
       e.target.value = "";
     } catch (err) {
