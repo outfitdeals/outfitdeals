@@ -3119,7 +3119,7 @@ function MyPageContent() {
                   </p>
                 </div>
 
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div className="flex flex-row items-center gap-4">
                   <ProfileAvatar
                     src={avatarUrl}
                     name={username}
@@ -3184,7 +3184,7 @@ function MyPageContent() {
                   </div>
 
                   <p className="mt-2 text-xs leading-5 text-slate-500">
-                    2〜20文字。文字・数字・_（アンダーバー）・-（ハイフン）が使用できます。
+                    2〜10文字。文字・数字・_（アンダーバー）・-（ハイフン）が使用できます。
                   </p>
 
                   {userBadge === "staff" ? (
