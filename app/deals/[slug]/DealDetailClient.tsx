@@ -4608,7 +4608,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
               )}
             </section>
 
-            <aside className="sticky top-24 max-h-[calc(100vh-7rem)] w-72 flex-none self-start overflow-x-hidden overflow-y-auto overscroll-contain p-1">
+            <aside className="sticky bottom-4 w-72 flex-none self-end p-1">
               <RightSidebar
                 popular={popular}
                 trending={trending}

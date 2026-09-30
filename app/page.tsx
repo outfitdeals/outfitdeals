@@ -3772,7 +3772,7 @@ function PageContent() {
                 popular={sidePopularVM}
                 trending={sideTrendingVM}
                 endingSoon={sideEndingSoonVM}
-                className="sticky top-24 max-h-[calc(100vh-7rem)] w-72 flex-none self-start space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain mt-[44px] pl-1 pt-1 pr-2 pb-2"
+                className="sticky bottom-4 w-72 flex-none self-end space-y-4 mt-[44px] pl-1 pt-1 pr-2 pb-2"
                 onLike={(id) => handleLikeAny(id)}
                 onShare={(id) => {
                   const deal = [...sidePopularVM, ...sideTrendingVM, ...sideEndingSoonVM].find(
