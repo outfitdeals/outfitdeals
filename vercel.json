@@ -1,4 +1,4 @@
-﻿{
+{
   "crons": [
     {
       "path": "/api/rakuten-auto-post",
