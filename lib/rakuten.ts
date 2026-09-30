@@ -716,6 +716,7 @@ export async function fetchRakutenItemByUrl(
     keywords,
   });
   let allCandidates: RakutenApiItem[] = [];
+
   for (const keyword of keywords) {
     const items = await searchRakutenItems({
       shopCode,

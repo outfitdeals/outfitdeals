@@ -194,7 +194,7 @@ function normalizeDealSlugPart(value: string | null | undefined) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._~-]+/g, "-")
+    .replace(/[^a-z0-9._\\\~-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
@@ -496,7 +496,8 @@ function PostPageContent() {
         if (cancelled) return;
 
         const loadedSourceUrl =
-          data.source_url || recoverDirectRakutenUrl(data.deal_url);
+          recoverDirectRakutenUrl(data.source_url) ||
+          recoverDirectRakutenUrl(data.deal_url);
 
         setProductUrl(loadedSourceUrl);
         setOriginalDealUrl(loadedSourceUrl);
@@ -652,6 +653,14 @@ function PostPageContent() {
           return;
         }
 
+        if (isEditMode) {
+          setApiError(
+            msg + " 登録済みの情報は変更していません。"
+          );
+          setManualMode(true);
+          return;
+        }
+
         setApiError(
           msg +
             " タイトルや価格・ショップ名は手入力してください。アフィリエイトリンクは投稿時に自動付与されます。"
@@ -674,19 +683,29 @@ function PostPageContent() {
         data = JSON.parse(text);
       } catch (e) {
         console.error("rakuten-preview json parse error:", e, text);
-        setApiError("楽天商品の自動取得に失敗しました。");
+        setApiError(
+          isEditMode
+            ? "楽天商品の自動取得に失敗しました。登録済みの情報は変更していません。"
+            : "楽天商品の自動取得に失敗しました。"
+        );
         setManualMode(true);
-        setCategory("");
+        if (!isEditMode) {
+          setCategory("");
+        }
         return;
       }
 
       if (!data || typeof data !== "object") {
         console.error("rakuten-preview invalid data:", data);
         setApiError(
-          "楽天APIから無効なデータが返されました。手入力モードに切り替えます。"
+          isEditMode
+            ? "楽天APIから無効なデータが返されました。登録済みの情報は変更していません。"
+            : "楽天APIから無効なデータが返されました。手入力モードに切り替えます。"
         );
         setManualMode(true);
-        setCategory("");
+        if (!isEditMode) {
+          setCategory("");
+        }
         return;
       }
 
@@ -741,8 +760,13 @@ function PostPageContent() {
     } catch (err: any) {
       console.error("rakuten-preview error:", err);
       setApiError(
-        "楽天APIとの通信中にエラーが発生しました。時間をおいて再度お試しください。"
+        isEditMode
+          ? "楽天APIとの通信中にエラーが発生しました。登録済みの情報は変更していません。時間をおいて再度お試しください。"
+          : "楽天APIとの通信中にエラーが発生しました。時間をおいて再度お試しください。"
       );
+      if (isEditMode) {
+        setManualMode(true);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -863,6 +887,58 @@ function PostPageContent() {
         return;
       }
 
+      const expiresAtIso = expiresAt
+        ? japanDateTimeLocalToIso(expiresAt)
+        : null;
+
+      if (!isEditMode && expiresAtIso) {
+        const expiresAtMs = new Date(expiresAtIso).getTime();
+        const expiresAtNextMinuteIso = new Date(
+          expiresAtMs + 60 * 1000
+        ).toISOString();
+
+        const { data: sameExpiryDeals, error: duplicateLookupError } =
+          await supabase
+            .from("deals")
+            .select(
+              "id, source_url, deal_url, expires_at"
+            )
+            .eq("market_code", routeIdentifiers.marketCode)
+            .eq("shop_id", routeIdentifiers.shopId)
+            .gte("expires_at", expiresAtIso)
+            .lt("expires_at", expiresAtNextMinuteIso);
+
+        if (duplicateLookupError) {
+          console.error("duplicate deal lookup error:", duplicateLookupError);
+          setApiError(
+            "重複ディールの確認に失敗しました。時間をおいて再度お試しください。"
+          );
+          return;
+        }
+
+        const normalizedCurrentProductUrl =
+          normalizeRakutenProductUrl(trimmedProductUrl);
+
+        const duplicateDeal = (sameExpiryDeals ?? []).find((deal) => {
+          const existingProductUrl =
+            recoverDirectRakutenUrl(deal.source_url) ||
+            recoverDirectRakutenUrl(deal.deal_url);
+
+          return (
+            existingProductUrl &&
+            normalizeRakutenProductUrl(existingProductUrl) ===
+              normalizedCurrentProductUrl
+          );
+        });
+
+        if (duplicateDeal) {
+          setApiError(
+            "この商品は同じ終了日時のディールがすでに投稿されています。"
+          );
+          return;
+        }
+      }
+
       let nextDealNumber = 1;
 
       if (!isEditMode) {
@@ -953,7 +1029,7 @@ function PostPageContent() {
         category,
         brand: brand.trim() || null,
         free_shipping: freeShipping,
-        expires_at: expiresAt ? japanDateTimeLocalToIso(expiresAt) : null,
+        expires_at: expiresAtIso,
       };
 
       if (isEditMode && editId) {
@@ -1090,6 +1166,8 @@ function PostPageContent() {
                 id="deal-product-url"
                 type="url"
                 className={`h-12 w-full rounded-md border px-3 text-[15px] text-slate-900 ${placeholderClass} ${
+                  isEditMode ? "cursor-not-allowed bg-slate-100 text-slate-600" : ""
+                } ${
                   showValidationErrors &&
                   (!productUrl.trim() ||
                     !isValidHttpUrl(productUrl) ||
@@ -1099,6 +1177,7 @@ function PostPageContent() {
                 } focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43] sm:h-auto sm:flex-1 sm:rounded sm:py-2 sm:text-sm`}
                 placeholder="https://item.rakuten.co.jp/ショップ名/商品コード/"
                 value={productUrl}
+                readOnly={isEditMode}
                 onChange={(e) => {
                   const nextUrl = e.target.value;
                   setProductUrl(nextUrl);
@@ -1113,8 +1192,8 @@ function PostPageContent() {
               <button
                 type="button"
                 onClick={handleRakutenAutoFill}
-                disabled={isLoading || isEditLoading}
-                className="h-11 w-full rounded-md bg-[#001e43] px-4 text-sm font-semibold text-white hover:bg-[#002b66] disabled:opacity-60 sm:h-auto sm:w-auto sm:whitespace-nowrap sm:rounded sm:px-3 sm:py-2 sm:text-xs cursor-pointer"
+                disabled={isEditMode || isLoading || isEditLoading}
+                className="h-11 w-full cursor-pointer rounded-md bg-[#001e43] px-4 text-sm font-semibold text-white hover:bg-[#002b66] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-100 sm:h-auto sm:w-auto sm:whitespace-nowrap sm:rounded sm:px-3 sm:py-2 sm:text-xs"
               >
                 楽天から自動入力
               </button>
@@ -1142,7 +1221,7 @@ function PostPageContent() {
 
             <p className="mt-1.5 hidden text-xs leading-5 text-slate-600 sm:block">
               {isEditMode
-                ? "ここには元の商品ページURLを保存します。更新時にはトクミッケのアフィリエイトURLを再生成します。"
+                ? "登録済みの商品ページURLは変更できません。更新時にはトクミッケのアフィリエイトURLを再生成します。"
                 : "楽天の商品ページURLをそのまま貼り付けてください。末尾に ?eid= などのパラメータが付いていても使用できます。トクミッケ側で正規の商品URLに整えます。アフィリエイトURLや短縮URLは使用できません。"}
             </p>
           </div>

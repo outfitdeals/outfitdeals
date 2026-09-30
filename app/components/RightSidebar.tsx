@@ -1,7 +1,6 @@
-// app/components/RightSidebar.tsx
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageSquare, ThumbsUp } from "lucide-react";
 import { yen } from "./DealUI";
@@ -18,6 +17,7 @@ export type SidebarDeal = {
   isLiked?: boolean;
   isSaved?: boolean;
   isCommented?: boolean;
+  expiresAt?: string | null;
 };
 
 type Props = {
@@ -52,6 +52,32 @@ function clamp3Style(): React.CSSProperties {
   };
 }
 
+function formatRemainingTime(expiresAt: string | null | undefined, nowMs: number) {
+  if (!expiresAt) return null;
+
+  const expiresMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiresMs)) return null;
+
+  const remainingMs = expiresMs - nowMs;
+  if (remainingMs <= 0) return "終了";
+
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const hh = String(hours).padStart(2, "0");
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+
+  if (days > 0) {
+    return `残り ${days}日 ${hh}:${mm}:${ss}`;
+  }
+
+  return `残り ${hh}:${mm}:${ss}`;
+}
+
 export default function RightSidebar({
   popular = [],
   trending = [],
@@ -64,8 +90,17 @@ export default function RightSidebar({
   placeholderImg = DEFAULT_PLACEHOLDER,
 }: Props) {
   const clampStyle = clamp3Style();
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
-  const renderList = (items: SidebarDeal[]) => {
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, []);
+
+  const renderList = (items: SidebarDeal[], showCountdown = false) => {
     if (!items || items.length === 0) {
       return (
         <div className="px-3 py-3 text-xs text-slate-500">
@@ -80,6 +115,9 @@ export default function RightSidebar({
           const likeDisabled = !onLike;
           const isLiked = d.isLiked === true;
           const detailUrl = d.detailUrl ?? `/deals/${d.id}`;
+          const remainingTime = showCountdown
+            ? formatRemainingTime(d.expiresAt, nowMs)
+            : null;
 
           return (
             <li
@@ -115,8 +153,21 @@ export default function RightSidebar({
                   {d.title}
                 </Link>
 
-                <div className="mt-0.5 text-[11px] text-[#d90429]">
-                  {yen(d.price)}
+                <div className="mt-0.5 flex w-full items-baseline justify-between gap-2">
+                  <span className="text-[11px] text-[#d90429]">
+                    {yen(d.price)}
+                  </span>
+                  {remainingTime ? (
+                    <span
+                      className={
+                        remainingTime === "終了"
+                          ? "ml-auto text-right text-[10px] font-medium tabular-nums text-slate-500"
+                          : "ml-auto text-right text-[10px] font-medium tabular-nums text-[#001e43]"
+                      }
+                    >
+                      {remainingTime}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-500">
@@ -216,7 +267,7 @@ export default function RightSidebar({
             まもなく終了
           </h3>
         </div>
-        {renderList(endingSoon)}
+        {renderList(endingSoon, true)}
       </section>
     </aside>
   );

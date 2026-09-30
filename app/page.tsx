@@ -67,18 +67,26 @@ type CategoryFilter =
   | "all"
   | "fashion_women"
   | "fashion_men"
+  | "food"
   | "beauty"
   | "home"
+  | "interior"
   | "electronics"
+  | "sports"
+  | "shoes"
   | "other";
 
 const CATEGORY_TABS: Array<{ value: CategoryFilter; label: string }> = [
   { value: "all", label: "すべて" },
   { value: "fashion_women", label: "レディース" },
   { value: "fashion_men", label: "メンズ" },
+  { value: "food", label: "食品・飲料" },
   { value: "beauty", label: "ビューティー" },
   { value: "home", label: "日用品・ホーム" },
+  { value: "interior", label: "インテリア・家具" },
   { value: "electronics", label: "家電・ガジェット" },
+  { value: "sports", label: "スポーツ・アウトドア" },
+  { value: "shoes", label: "靴・シューズ" },
   { value: "other", label: "その他" },
 ];
 
@@ -97,12 +105,20 @@ function getCategoryLabel(category?: string | null) {
       return "レディース";
     case "fashion_men":
       return "メンズ";
+    case "food":
+      return "食品・飲料";
     case "beauty":
       return "ビューティー";
     case "home":
       return "日用品・ホーム";
+    case "interior":
+      return "インテリア・家具";
     case "electronics":
       return "家電・ガジェット";
+    case "sports":
+      return "スポーツ・アウトドア";
+    case "shoes":
+      return "靴・シューズ";
     case "other":
       return "その他";
     default:
@@ -515,14 +531,12 @@ function MobileDealRow({
 
   const likeCount = Number(d.likes ?? 0);
   const likeDisabled = !canLike;
-  const categoryLabel = getCategoryLabel(d.category);
-
   return (
     <article className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 shadow-[0_5px_14px_-8px_rgba(15,23,42,0.38)]">
       <div className="flex items-start gap-3">
         <Link
           href={d.detailUrl}
-          className="h-[84px] w-[84px] flex-none overflow-hidden rounded-md bg-slate-100"
+          className="h-[84px] w-[84px] flex-none self-center overflow-hidden rounded-md bg-slate-100"
         >
           <img
             src={imageSrc}
@@ -534,15 +548,8 @@ function MobileDealRow({
         </Link>
 
         <div className="min-w-0 flex-1">
-          {categoryLabel ? (
-            <div className="mb-1">
-              <span className="inline-block rounded bg-slate-100 px-2 py-[2px] text-[10px] font-semibold leading-none text-slate-600">
-                {categoryLabel}
-              </span>
-            </div>
-          ) : null}
 
-          <h3 className="line-clamp-2 text-[14px] font-semibold leading-[1.22] text-slate-800">
+          <h3 className="line-clamp-2 text-[13px] font-semibold leading-[1.2] text-slate-800">
             <Link href={d.detailUrl} className="cursor-pointer hover:underline">
               {d.title}
             </Link>
@@ -905,41 +912,137 @@ type CategoryTabsProps = {
 };
 
 function CategoryTabs({ active, onChange, compact = false }: CategoryTabsProps) {
-  return (
-    <div
-      className={
-        compact
-          ? "-mx-4 mb-3 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          : "-mx-4 mb-4 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:px-0"
-      }
-    >
-      <div className={compact ? "flex min-w-max gap-1.5" : "flex min-w-max gap-2"}>
-        {CATEGORY_TABS.map((tab) => {
-          const isActive = active === tab.value;
-          const sizeClass = compact
-            ? "px-3 py-1.5 text-[13px]"
-            : "px-4 py-2 text-sm";
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
 
-          return (
-            <button
-              key={tab.value}
-              type="button"
-              onClick={() => onChange(tab.value)}
-              className={
-                isActive
-                  ? `inline-flex items-center rounded-full bg-[#006888] font-semibold text-white ${sizeClass}`
-                  : `inline-flex items-center rounded-full border border-slate-300 bg-white font-semibold text-slate-700 hover:bg-slate-50 ${sizeClass}`
-              }
-            >
-              {tab.label}
-            </button>
-          );
-        })}
+  const updateScrollButtons = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element || compact) {
+      setCanScrollLeft(false);
+      setCanScrollRight(false);
+      return;
+    }
+
+    setCanScrollLeft(element.scrollLeft > 1);
+    setCanScrollRight(element.scrollLeft + element.clientWidth < element.scrollWidth - 1);
+  }, [compact]);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || compact) return;
+
+    updateScrollButtons();
+    const handleResize = () => updateScrollButtons();
+
+    element.addEventListener("scroll", updateScrollButtons, { passive: true });
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      element.removeEventListener("scroll", updateScrollButtons);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [compact, updateScrollButtons]);
+
+  const scrollCategories = (direction: "left" | "right") => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    element.scrollBy({
+      left: direction === "left" ? -320 : 320,
+      behavior: "smooth",
+    });
+  };
+
+  if (compact) {
+    return (
+      <div className="-mx-4 mb-3 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex min-w-max gap-1.5">
+          {CATEGORY_TABS.map((tab) => {
+            const isActive = active === tab.value;
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                onClick={() => onChange(tab.value)}
+                className={
+                  isActive
+                    ? "inline-flex cursor-pointer items-center rounded-full bg-[#006888] px-3 py-1.5 text-[13px] font-semibold text-white"
+                    : "inline-flex cursor-pointer items-center rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50"
+                }
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="relative mb-4">
+      <div
+        ref={scrollRef}
+        className="overflow-x-auto pr-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        <div className="flex min-w-max gap-2">
+          {CATEGORY_TABS.map((tab) => {
+            const isActive = active === tab.value;
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                onClick={() => onChange(tab.value)}
+                className={
+                  isActive
+                    ? "inline-flex cursor-pointer items-center rounded-full bg-[#006888] px-4 py-2 text-sm font-semibold text-white"
+                    : "inline-flex cursor-pointer items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                }
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {canScrollLeft ? (
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 bg-gradient-to-l from-transparent via-white/80 to-white"
+          />
+          <button
+            type="button"
+            onClick={() => scrollCategories("left")}
+            className="absolute left-1 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50"
+            aria-label="カテゴリを左へ"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+        </>
+      ) : null}
+
+      {canScrollRight ? (
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 z-10 w-24 bg-gradient-to-r from-transparent via-white/80 to-white"
+          />
+          <button
+            type="button"
+            onClick={() => scrollCategories("right")}
+            className="absolute right-1 top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50"
+            aria-label="カテゴリを右へ"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }
-
 
 type FilterOption<T extends string | number | null> = {
   value: T;
@@ -1073,6 +1176,218 @@ function formatDealPostedAt(value: string) {
   });
 }
 
+type MobileSpotlightTab = "popular" | "trending" | "endingSoon";
+
+function MobileSpotlightDeals({
+  popular,
+  trending,
+  endingSoon,
+  onLike,
+  onShare,
+}: {
+  popular: SidebarDeal[];
+  trending: SidebarDeal[];
+  endingSoon: SidebarDeal[];
+  onLike: (id: string) => void;
+  onShare: (id: string) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<MobileSpotlightTab>("popular");
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (activeTab !== "endingSoon") return;
+
+    const timerId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, [activeTab]);
+
+  const tabs: Array<{
+    value: MobileSpotlightTab;
+    label: string;
+    items: SidebarDeal[];
+  }> = [
+    { value: "popular", label: "人気", items: popular },
+    { value: "trending", label: "急上昇", items: trending },
+    { value: "endingSoon", label: "まもなく終了", items: endingSoon },
+  ];
+
+  const activeItems =
+    tabs.find((tab) => tab.value === activeTab)?.items.slice(0, 3) ?? [];
+
+  const formatCountdown = (expiresAt?: string | null) => {
+    if (!expiresAt) return null;
+
+    const expiresMs = new Date(expiresAt).getTime();
+    if (!Number.isFinite(expiresMs)) return null;
+
+    const remainingMs = expiresMs - nowMs;
+    if (remainingMs <= 0) return "終了";
+
+    const totalSeconds = Math.floor(remainingMs / 1000);
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const hh = String(hours).padStart(2, "0");
+    const mm = String(minutes).padStart(2, "0");
+    const ss = String(seconds).padStart(2, "0");
+
+    return days > 0
+      ? `残り ${days}日 ${hh}:${mm}:${ss}`
+      : `残り ${hh}:${mm}:${ss}`;
+  };
+
+  return (
+    <section className="mt-5 px-4">
+      <h2 className="text-[19px] font-bold tracking-[0.01em] text-[#001e43]">
+        注目のディール
+      </h2>
+
+      <div className="mt-2 flex rounded-lg bg-slate-100 p-1">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.value;
+
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+              className={
+                isActive
+                  ? "flex-1 cursor-pointer rounded-md bg-white px-2 py-2 text-[12px] font-semibold text-[#006888] shadow-sm"
+                  : "flex-1 cursor-pointer rounded-md px-2 py-2 text-[12px] font-semibold text-slate-600"
+              }
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-2 space-y-2">
+        {activeItems.length > 0 ? (
+          activeItems.map((deal) => {
+            const detailUrl = deal.detailUrl ?? `/deals/${deal.id}`;
+            const countdown =
+              activeTab === "endingSoon"
+                ? formatCountdown(deal.expiresAt)
+                : null;
+
+            return (
+              <article
+                key={deal.id}
+                className="flex gap-3 rounded-lg border border-slate-200 bg-white p-2.5 shadow-[0_5px_14px_-8px_rgba(15,23,42,0.38)]"
+              >
+                <Link
+                  href={detailUrl}
+                  className="h-[76px] w-[76px] flex-none cursor-pointer overflow-hidden rounded-md bg-slate-100"
+                >
+                  <img
+                    src={
+                      deal.imageUrl ??
+                      "https://via.placeholder.com/160x160?text=No+Image"
+                    }
+                    alt=""
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </Link>
+
+                <div className="min-w-0 flex-1">
+                  <Link
+                    href={detailUrl}
+                    className="line-clamp-2 cursor-pointer text-[13px] font-semibold leading-[1.25] text-slate-800 hover:underline"
+                  >
+                    {deal.title}
+                  </Link>
+
+                  <div className="mt-1 flex items-baseline justify-between gap-2">
+                    <span className="text-[16px] font-bold leading-none text-[#d90429]">
+                      {yen(deal.price)}
+                    </span>
+
+                    {countdown ? (
+                      <span
+                        className={
+                          countdown === "終了"
+                            ? "flex-none text-right text-[10px] font-medium tabular-nums text-slate-500"
+                            : "flex-none text-right text-[10px] font-medium tabular-nums text-[#001e43]"
+                        }
+                      >
+                        {countdown}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-4 text-[11px] text-slate-500">
+                    <button
+                      type="button"
+                      onClick={() => onLike(deal.id)}
+                      className={
+                        deal.isLiked
+                          ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
+                          : "inline-flex cursor-pointer items-center gap-1 hover:text-[#f59e0b]"
+                      }
+                      aria-label={deal.isLiked ? "いいねを取り消す" : "いいね"}
+                    >
+                      <ThumbsUp
+                        className="h-3.5 w-3.5"
+                        fill={deal.isLiked ? "currentColor" : "none"}
+                      />
+                      {Number(deal.likes ?? 0)}
+                    </button>
+
+                    <Link
+                      href={`${detailUrl}#comments`}
+                      className={
+                        deal.isCommented
+                          ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
+                          : "inline-flex cursor-pointer items-center gap-1 hover:text-[#006888]"
+                      }
+                      aria-label="コメントを見る"
+                    >
+                      <MessageSquare
+                        className="h-3.5 w-3.5"
+                        fill={deal.isCommented ? "currentColor" : "none"}
+                      />
+                      {Number(deal.comments ?? 0)}
+                    </Link>
+
+                    <button
+                      type="button"
+                      onClick={() => onShare(deal.id)}
+                      className="ml-auto inline-flex cursor-pointer items-center text-slate-500 hover:text-[#006888]"
+                      aria-label="シェア"
+                      title="シェア"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        aria-hidden="true"
+                        className="h-3.5 w-3.5 fill-current"
+                      >
+                        <path d="M21.55 9.17 14.83 3.5a.75.75 0 0 0-1.23.57v3.06C7.5 7.63 3.25 10.72 2.1 16.8a.75.75 0 0 0 1.28.65c2.52-2.7 5.57-4.12 10.22-4.22v3.2a.75.75 0 0 0 1.23.57l6.72-5.67a1.4 1.4 0 0 0 0-2.16Z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-4 text-center text-xs text-slate-500">
+            ディールがありません。
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function PageContent() {
   const searchParams = useSearchParams();
   const q = searchParams.get("q") ?? "";
@@ -1121,7 +1436,8 @@ function PageContent() {
   const [sidePopular, setSidePopular] = useState<DealsRow[]>([]);
   const [sideTrending, setSideTrending] = useState<DealsRow[]>([]);
   const [sideEndingSoon, setSideEndingSoon] = useState<DealsRow[]>([]);
-  const [topDealsPage, setTopDealsPage] = useState<1 | 2>(1);
+  const [topDealsPage, setTopDealsPage] = useState<number>(1);
+  const [topDealsBatch, setTopDealsBatch] = useState(1);
   const [likingId, setLikingId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [searchSort, setSearchSort] = useState<"relevance" | "newest" | "oldest">("relevance");
@@ -1334,6 +1650,7 @@ function PageContent() {
   const searchRequestIdRef = useRef(0);
   const searchFacetRequestIdRef = useRef(0);
   const previousSearchCriteriaKeyRef = useRef<string | null>(null);
+  const topDealsLoadMoreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1372,8 +1689,8 @@ function PageContent() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    const p = params.get("page");
-    setTopDealsPage(p === "2" ? 2 : 1);
+    const p = Number(params.get("page") ?? "1");
+    setTopDealsPage(Number.isInteger(p) && p > 0 ? p : 1);
   }, []);
 
   const attachAuthorUsername = useCallback(async (rows: any[]) => {
@@ -1455,7 +1772,7 @@ function PageContent() {
 
     const { data, error } = await supabase
       .from("deals")
-      .select("id, public_id, shop_id, item_id")
+      .select("id, public_id, shop_id, item_id, expires_at")
       .in("id", missingIds);
 
     if (error) {
@@ -1476,6 +1793,7 @@ function PageContent() {
         public_id: route.public_id != null ? Number(route.public_id) : null,
         shop_id: route.shop_id ?? null,
         item_id: route.item_id ?? null,
+        expires_at: route.expires_at ?? row.expires_at ?? null,
       };
     });
   }, []);
@@ -1680,7 +1998,7 @@ function PageContent() {
         .eq("moderation_status", "visible")
         .eq("is_expired", false)
         .order("created_at", { ascending: false })
-        .limit(200);
+        .limit(1000);
 
       if (dealsError) {
         console.error("loadMainDeals error:", dealsError);
@@ -1985,7 +2303,7 @@ function PageContent() {
 
       const endingSoonRows = rows.filter((r) => r.kind === "ending_soon");
 
-      const endingSoon: DealsRow[] = endingSoonRows.map((r) => ({
+      const fallbackEndingSoon: DealsRow[] = endingSoonRows.map((r) => ({
         id: String(r.id),
         created_at: new Date().toISOString(),
         user_id: null,
@@ -2006,6 +2324,58 @@ function PageContent() {
         expires_at: null,
         author_username: null,
       }));
+
+      const { data: endingSoonData, error: endingSoonError } = await supabase
+        .from("deals")
+        .select(`
+          id,
+          public_id,
+          shop_id,
+          item_id,
+          created_at,
+          user_id,
+          title,
+          price,
+          orig_price,
+          market,
+          shop_name,
+          deal_url,
+          image_url,
+          likes_count,
+          comments_count,
+          comment,
+          is_expired,
+          category,
+          brand,
+          free_shipping,
+          expires_at
+        `)
+        .eq("moderation_status", "visible")
+        .eq("is_expired", false)
+        .not("expires_at", "is", null)
+        .gt("expires_at", new Date().toISOString())
+        .order("expires_at", { ascending: true })
+        .limit(100);
+
+      let endingSoon: DealsRow[];
+
+      if (endingSoonError) {
+        console.error("loadSideDeals ending soon error:", endingSoonError);
+        endingSoon = fallbackEndingSoon;
+      } else {
+        const groupedByExpiry = new Map<string, DealsRow[]>();
+
+        for (const deal of (endingSoonData ?? []) as DealsRow[]) {
+          const expiryKey = deal.expires_at ?? "";
+          const group = groupedByExpiry.get(expiryKey) ?? [];
+          group.push(deal);
+          groupedByExpiry.set(expiryKey, group);
+        }
+
+        endingSoon = Array.from(groupedByExpiry.values())
+          .flatMap((group) => shuffle(group))
+          .slice(0, 5);
+      }
 
       const uniqueById = Array.from(
         new Map(
@@ -2516,6 +2886,7 @@ function PageContent() {
   useEffect(() => {
     setCurrentPage(0);
     setTopDealsPage(1);
+    setTopDealsBatch(1);
   }, [activeCategory, q]);
 
   const handlePrev = () => setCurrentPage((p) => Math.max(0, p - 1));
@@ -2725,11 +3096,54 @@ function PageContent() {
     }
   };
 
-  const TOP_PAGE_SIZE = 50;
-  const topDealsForThisPageRows = topDealsFiltered.slice(
-    (topDealsPage - 1) * TOP_PAGE_SIZE,
-    topDealsPage * TOP_PAGE_SIZE
+  const TOP_MAX_ROWS_PER_PAGE = 120;
+  const TOP_DESKTOP_ROWS_PER_BATCH = 10;
+  const TOP_MOBILE_CARDS_PER_BATCH = 50;
+
+  const topDealsPageSize = isMobileMode
+    ? TOP_MAX_ROWS_PER_PAGE
+    : TOP_MAX_ROWS_PER_PAGE * cardsPerPage;
+  const topDealsBatchSize = isMobileMode
+    ? TOP_MOBILE_CARDS_PER_BATCH
+    : TOP_DESKTOP_ROWS_PER_BATCH * cardsPerPage;
+  const topDealsPageStart = (topDealsPage - 1) * topDealsPageSize;
+  const topDealsAvailableOnPage = Math.max(
+    0,
+    Math.min(topDealsPageSize, topDealsFiltered.length - topDealsPageStart)
   );
+  const topDealsVisibleCount = Math.min(
+    topDealsAvailableOnPage,
+    topDealsBatch * topDealsBatchSize
+  );
+  const topDealsForThisPageRows = topDealsFiltered.slice(
+    topDealsPageStart,
+    topDealsPageStart + topDealsVisibleCount
+  );
+  const hasMoreTopDealsWithinPage =
+    topDealsVisibleCount < topDealsAvailableOnPage;
+  const hasNextTopDealsPage =
+    topDealsFiltered.length > topDealsPageStart + topDealsPageSize;
+  const hasPrevTopDealsPage = topDealsPage > 1;
+
+  useEffect(() => {
+    setTopDealsBatch(1);
+  }, [topDealsPage, isMobileMode, cardsPerPage]);
+
+  useEffect(() => {
+    const target = topDealsLoadMoreRef.current;
+    if (!target || !hasMoreTopDealsWithinPage) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        setTopDealsBatch((prev) => prev + 1);
+      },
+      { rootMargin: "600px 0px" }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMoreTopDealsWithinPage, topDealsPage, isMobileMode, cardsPerPage]);
 
   const toSideVM = (r: DealsRow): SidebarDeal => ({
     id: r.id,
@@ -2743,6 +3157,7 @@ function PageContent() {
     isLiked: r.has_liked === true,
     isSaved: !!r.has_saved,
     isCommented: !!r.has_commented,
+    expiresAt: r.expires_at ?? null,
   });
 
   const sidePopularVM = sidePopular.map(toSideVM);
@@ -3474,6 +3889,27 @@ function PageContent() {
             </div>
           </section>
 
+          <MobileSpotlightDeals
+            popular={sidePopularVM}
+            trending={sideTrendingVM}
+            endingSoon={sideEndingSoonVM}
+            onLike={handleLikeAny}
+            onShare={(dealId) => {
+              const deal = [
+                ...sidePopularVM,
+                ...sideTrendingVM,
+                ...sideEndingSoonVM,
+              ].find((item) => item.id === dealId);
+
+              if (!deal) return;
+
+              void handleShareDeal(
+                deal.detailUrl ?? `/deals/${deal.id}`,
+                deal.title
+              );
+            }}
+          />
+
           <section className="mt-6">
             <div className="px-4">
               <h2 className="text-xl font-semibold tracking-wide text-[#001e43]">
@@ -3519,31 +3955,37 @@ function PageContent() {
               })}
             </div>
 
+            {hasMoreTopDealsWithinPage ? (
+              <div ref={topDealsLoadMoreRef} className="h-1" aria-hidden="true" />
+            ) : null}
+
+            {!hasMoreTopDealsWithinPage && (hasPrevTopDealsPage || hasNextTopDealsPage) ? (
             <div className="mt-4 flex justify-end px-4">
               <div className="flex items-center gap-3">
                 <a
-                  href="/?page=1"
+                  href={`/?page=${Math.max(1, topDealsPage - 1)}`}
                   className={
-                    topDealsPage === 1
+                    !hasPrevTopDealsPage
                       ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
-                      : "inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
+                      : "inline-flex cursor-pointer items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
                   }
                 >
                   前へ
                 </a>
 
                 <a
-                  href="/?page=2"
+                  href={`/?page=${topDealsPage + 1}`}
                   className={
-                    topDealsPage === 2
+                    !hasNextTopDealsPage
                       ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
-                      : "inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
+                      : "inline-flex cursor-pointer items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
                   }
                 >
                   次へ
                 </a>
               </div>
             </div>
+            ) : null}
           </section>
         </main>
       ) : (
@@ -3551,6 +3993,11 @@ function PageContent() {
           <div className="flex justify-center">
             <div className="flex flex-row gap-6" style={{ minWidth: layoutTotalWidth }}>
               <section className="min-w-0 flex-none" style={{ width: rowCardsWidth }}>
+                <CategoryTabs
+                  active={activeCategory}
+                  onChange={setActiveCategory}
+                />
+
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-xl font-semibold tracking-wide text-[#001e43]">
                     あなたにおすすめ
@@ -3614,11 +4061,6 @@ function PageContent() {
                     </button>
                   </div>
                 </div>
-
-                <CategoryTabs
-                  active={activeCategory}
-                  onChange={setActiveCategory}
-                />
 
                 <div
                   className="relative"
@@ -3740,31 +4182,37 @@ function PageContent() {
                     })}
                   </div>
 
+                  {hasMoreTopDealsWithinPage ? (
+                    <div ref={topDealsLoadMoreRef} className="h-1" aria-hidden="true" />
+                  ) : null}
+
+                  {!hasMoreTopDealsWithinPage && (hasPrevTopDealsPage || hasNextTopDealsPage) ? (
                   <div className="mt-6 flex justify-end">
                     <div className="flex items-center gap-3">
                       <a
-                        href="/?page=1"
+                        href={`/?page=${Math.max(1, topDealsPage - 1)}`}
                         className={
-                          topDealsPage === 1
+                          !hasPrevTopDealsPage
                             ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
-                            : "inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
+                            : "inline-flex cursor-pointer items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
                         }
                       >
                         前へ
                       </a>
 
                       <a
-                        href="/?page=2"
+                        href={`/?page=${topDealsPage + 1}`}
                         className={
-                          topDealsPage === 2
+                          !hasNextTopDealsPage
                             ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
-                            : "inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
+                            : "inline-flex cursor-pointer items-center gap-1 rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm text-black hover:bg-slate-50"
                         }
                       >
                         次へ
                       </a>
                     </div>
                   </div>
+                  ) : null}
                 </div>
               </section>
 

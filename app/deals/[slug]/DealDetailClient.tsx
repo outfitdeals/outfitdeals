@@ -379,7 +379,7 @@ function CommentAvatar({
     ? supabase.storage.from("avatars").getPublicUrl(`${userId}/avatar.jpg`).data
         .publicUrl
     : null;
-  const publicUrl = avatarUrl?.trim() || storagePublicUrl;
+  const profileAvatarUrl = avatarUrl?.trim() || null;
 
   const dimension = size === "small" ? "h-8 w-8" : "h-10 w-10";
   const iconSize = size === "small" ? "h-5 w-5" : "h-6 w-6";
@@ -391,14 +391,26 @@ function CommentAvatar({
     >
       <UserRound className={iconSize} strokeWidth={1.8} />
 
-      {publicUrl ? (
+      {profileAvatarUrl || storagePublicUrl ? (
         <img
-          src={publicUrl}
+          key={profileAvatarUrl ?? storagePublicUrl ?? "avatar"}
+          src={profileAvatarUrl ?? storagePublicUrl ?? ""}
           alt=""
           className="absolute inset-0 h-full w-full object-cover"
           referrerPolicy="no-referrer"
           onError={(e) => {
-            e.currentTarget.style.display = "none";
+            const image = e.currentTarget;
+
+            if (
+              profileAvatarUrl &&
+              storagePublicUrl &&
+              image.src !== storagePublicUrl
+            ) {
+              image.src = storagePublicUrl;
+              return;
+            }
+
+            image.style.display = "none";
           }}
         />
       ) : null}
@@ -606,6 +618,15 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
   >(null);
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [myProfileUsername, setMyProfileUsername] = useState<string | null>(null);
+  const [posterProfile, setPosterProfile] = useState<{
+    username: string | null;
+    avatarUrl: string | null;
+    userBadge: string | null;
+  }>({
+    username: null,
+    avatarUrl: null,
+    userBadge: null,
+  });
 
   const [deal, setDeal] = useState<DealRow | null>(initialDeal);
   const [loading, setLoading] = useState(false);
@@ -810,6 +831,60 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
       cancelled = true;
     };
   }, [currentUser?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!deal?.user_id) {
+      setPosterProfile({
+        username: deal?.author_username?.trim() || null,
+        avatarUrl: null,
+        userBadge: null,
+      });
+      return;
+    }
+
+    supabase
+      .from("profiles")
+      .select("username, avatar_url, avatar_updated_at, user_badge")
+      .eq("id", deal.user_id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+
+        if (error) {
+          console.warn("load deal poster profile warn:", error);
+          setPosterProfile({
+            username: deal.author_username?.trim() || null,
+            avatarUrl: null,
+            userBadge: null,
+          });
+          return;
+        }
+
+        const rawAvatarUrl = data?.avatar_url?.trim() || null;
+        const avatarUpdatedAt = data?.avatar_updated_at ?? null;
+        const avatarUrl =
+          rawAvatarUrl && avatarUpdatedAt
+            ? `${rawAvatarUrl}${rawAvatarUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(
+                avatarUpdatedAt
+              )}`
+            : rawAvatarUrl;
+
+        setPosterProfile({
+          username:
+            data?.username?.trim() ||
+            deal.author_username?.trim() ||
+            null,
+          avatarUrl,
+          userBadge: data?.user_badge ?? null,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deal?.user_id, deal?.author_username]);
 
   const myDisplayName = useMemo(
     () => myProfileUsername ?? null,
@@ -1019,7 +1094,6 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
 
     const popularRows = rows.filter((r) => r.kind === "popular");
     const trendingRows = rows.filter((r) => r.kind === "trending");
-    const endingSoonRows = rows.filter((r) => r.kind === "ending_soon");
 
     let popularDeals = popularRows.map((r) => ({
       id: String(r.id),
@@ -1045,17 +1119,66 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
       isSaved: false,
     })) as SidebarDeal[];
 
-    let endingSoonDeals = endingSoonRows.map((r) => ({
-      id: String(r.id),
-      title: r.title ?? "タイトル未設定",
-      price: r.price ?? 0,
-      market: r.market ?? "",
-      imageUrl: r.image_url ?? null,
-      likes: Number(r.likes_count ?? 0),
-      comments: Number(r.comments_count ?? 0),
-      isLiked: false,
-      isSaved: false,
-    })) as SidebarDeal[];
+    const { data: endingSoonData, error: endingSoonError } = await supabase
+      .from("deals")
+      .select(`
+        id,
+        title,
+        price,
+        market,
+        image_url,
+        likes_count,
+        comments_count,
+        expires_at
+      `)
+      .eq("moderation_status", "visible")
+      .eq("is_expired", false)
+      .not("expires_at", "is", null)
+      .gt("expires_at", new Date().toISOString())
+      .order("expires_at", { ascending: true })
+      .limit(100);
+
+    let endingSoonDeals: SidebarDeal[] = [];
+
+    if (endingSoonError) {
+      console.warn("load sidebar ending soon warn:", endingSoonError);
+    } else {
+      const groupedByExpiry = new Map<string, any[]>();
+
+      for (const row of endingSoonData ?? []) {
+        const expiryKey = String(row.expires_at ?? "");
+        const group = groupedByExpiry.get(expiryKey) ?? [];
+        group.push(row);
+        groupedByExpiry.set(expiryKey, group);
+      }
+
+      const shuffleGroup = <T,>(items: T[]) => {
+        const result = [...items];
+
+        for (let i = result.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [result[i], result[j]] = [result[j], result[i]];
+        }
+
+        return result;
+      };
+
+      endingSoonDeals = Array.from(groupedByExpiry.values())
+        .flatMap((group) => shuffleGroup(group))
+        .slice(0, 5)
+        .map((r) => ({
+          id: String(r.id),
+          title: r.title ?? "タイトル未設定",
+          price: r.price ?? 0,
+          market: r.market ?? "",
+          imageUrl: r.image_url ?? null,
+          likes: Number(r.likes_count ?? 0),
+          comments: Number(r.comments_count ?? 0),
+          isLiked: false,
+          isSaved: false,
+          expiresAt: r.expires_at ?? null,
+        }));
+    }
 
     const allIds = Array.from(
       new Set([...popularDeals, ...trendingDeals, ...endingSoonDeals].map((r) => r.id))
@@ -1077,7 +1200,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
           .in("deal_id", allIds),
         supabase
           .from("deals")
-          .select("id, public_id, shop_id, item_id")
+          .select("id, public_id, shop_id, item_id, expires_at")
           .in("id", allIds),
       ]);
 
@@ -1208,6 +1331,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
           isLiked: likedSet.has(r.id),
           isSaved: savedSet.has(r.id),
           isCommented: commentedSet.has(r.id),
+          expiresAt: routeRow?.expires_at ?? r.expiresAt ?? null,
         };
       };
 
@@ -3726,22 +3850,41 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
           ) : (
             <>
               <div className="bg-white px-4 pt-3 pb-5 shadow-sm">
-                <div className="mb-3 flex items-center gap-2 text-[11px] text-slate-500">
-                  <span className="rounded bg-[#f5ecd1] px-2 py-[2px] text-[#7b6330]">
-                    注目ディール
-                  </span>
-                  {deal.user_id ? (
-                    <Link
-                      href={`/users/${deal.user_id}`}
-                      className="cursor-pointer font-semibold text-[#006888] hover:underline"
-                    >
-                      {deal.author_username ?? "匿名ユーザー"}
-                    </Link>
-                  ) : (
-                    <span>{deal.author_username ?? "トクミッケ"}</span>
-                  )}
-                  <span>·</span>
-                  <span>{fmtDealDateTime(deal.created_at)}</span>
+                <div className="mb-3 flex min-w-0 items-center gap-2 text-[11px] text-slate-500">
+                  <CommentAvatar
+                    userId={deal.user_id}
+                    username={
+                      posterProfile.username ??
+                      deal.author_username ??
+                      "トクミッケ"
+                    }
+                    avatarUrl={posterProfile.avatarUrl}
+                    size="small"
+                  />
+
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                    {deal.user_id ? (
+                      <Link
+                        href={`/users/${deal.user_id}`}
+                        className="max-w-[150px] cursor-pointer truncate font-semibold text-[#006888] hover:underline"
+                      >
+                        {posterProfile.username ??
+                          deal.author_username ??
+                          "匿名ユーザー"}
+                      </Link>
+                    ) : (
+                      <span className="max-w-[150px] truncate font-semibold text-slate-700">
+                        {posterProfile.username ??
+                          deal.author_username ??
+                          "トクミッケ"}
+                      </span>
+                    )}
+
+                    <UserBadge badge={posterProfile.userBadge} />
+
+                    <span>·</span>
+                    <span>{fmtDealDateTime(deal.created_at)}</span>
+                  </div>
                 </div>
 
                 <div className="overflow-hidden rounded-lg bg-[#f6f6f6]">
@@ -4319,24 +4462,41 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
 
                       <div className="flex-1 space-y-4">
                         <div>
-                          <div className="inline-flex flex-wrap items-center gap-2">
-                            <span className="text-xs text-slate-500">
-                              {fmtDealDateTime(deal.created_at)}
-                            </span>
+                          <div className="flex min-w-0 items-center gap-2 text-xs text-slate-500">
+                            <CommentAvatar
+                              userId={deal.user_id}
+                              username={
+                                posterProfile.username ??
+                                deal.author_username ??
+                                "トクミッケ"
+                              }
+                              avatarUrl={posterProfile.avatarUrl}
+                              size="small"
+                            />
 
-                            <span className="text-xs text-slate-500">
-                              ・投稿者{" "}
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
                               {deal.user_id ? (
                                 <Link
                                   href={`/users/${deal.user_id}`}
-                                  className="cursor-pointer font-semibold text-[#006888] hover:underline"
+                                  className="max-w-[180px] cursor-pointer truncate font-semibold text-[#006888] hover:underline"
                                 >
-                                  {deal.author_username ?? "匿名ユーザー"}
+                                  {posterProfile.username ??
+                                    deal.author_username ??
+                                    "匿名ユーザー"}
                                 </Link>
                               ) : (
-                                deal.author_username ?? "匿名ユーザー"
+                                <span className="max-w-[180px] truncate font-semibold text-slate-700">
+                                  {posterProfile.username ??
+                                    deal.author_username ??
+                                    "トクミッケ"}
+                                </span>
                               )}
-                            </span>
+
+                              <UserBadge badge={posterProfile.userBadge} />
+
+                              <span>·</span>
+                              <span>{fmtDealDateTime(deal.created_at)}</span>
+                            </div>
                           </div>
 
                           <h1 className="mt-2 text-[20px] font-semibold leading-[1.38] text-slate-900 xl:text-[21px]">

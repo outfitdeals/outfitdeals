@@ -29,6 +29,7 @@ type DealRow = {
   shop_name: string | null;
   deal_url: string | null;
   image_url: string | null;
+  expires_at?: string | null;
   is_expired: boolean | null;
   likes_count?: number | null;
   comments_count?: number | null;
@@ -460,6 +461,7 @@ function MyPageContent() {
     "all"
   );
   const [myDealsPage, setMyDealsPage] = useState(1);
+  const myDealsSectionRef = useRef<HTMLElement | null>(null);
   const [savedPage, setSavedPage] = useState(1);
   const LIST_PAGE_SIZE = 20;
 
@@ -587,7 +589,7 @@ function MyPageContent() {
     const { data, error } = await supabase
       .from("deals")
       .select(
-        "id, public_id, shop_id, item_id, created_at, user_id, title, price, market, shop_name, deal_url, image_url, is_expired, likes_count, comments_count"
+        "id, public_id, shop_id, item_id, created_at, user_id, title, price, market, shop_name, deal_url, image_url, expires_at, is_expired, likes_count, comments_count"
       )
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
@@ -611,6 +613,7 @@ function MyPageContent() {
       shop_name: r.shop_name ?? null,
       deal_url: r.deal_url ?? null,
       image_url: r.image_url ?? null,
+      expires_at: r.expires_at ?? null,
       is_expired: r.is_expired ?? null,
       likes_count: r.likes_count ?? null,
       comments_count: r.comments_count ?? null,
@@ -1375,11 +1378,28 @@ function MyPageContent() {
     return pages;
   }, [activityPage, activityTotalPages]);
 
+  const isDealPastExpiry = (deal: DealRow) => {
+    if (!deal.expires_at) return false;
+
+    const expiresAtMs = new Date(deal.expires_at).getTime();
+    return !Number.isNaN(expiresAtMs) && expiresAtMs <= Date.now();
+  };
+
   const handleToggleDealExpired = async (
     dealId: string,
     nextExpired: boolean
   ) => {
     if (!user || updatingDealStatusId) return;
+
+    const targetDeal = myDeals.find((deal) => deal.id === dealId);
+
+    if (
+      targetDeal &&
+      !nextExpired &&
+      isDealPastExpiry(targetDeal)
+    ) {
+      return;
+    }
 
     try {
       setUpdatingDealStatusId(dealId);
@@ -1894,6 +1914,24 @@ function MyPageContent() {
     return pages;
   }, [myDealsPage, myDealsTotalPages]);
 
+  const handleMyDealsPageChange = (nextPage: number) => {
+    const clampedPage = Math.min(
+      myDealsTotalPages,
+      Math.max(1, nextPage)
+    );
+
+    if (clampedPage === myDealsPage) return;
+
+    setMyDealsPage(clampedPage);
+
+    window.requestAnimationFrame(() => {
+      myDealsSectionRef.current?.scrollIntoView({
+        behavior: "auto",
+        block: "start",
+      });
+    });
+  };
+
   useEffect(() => {
     setMyDealsPage(1);
   }, [myDealsTab]);
@@ -2392,7 +2430,7 @@ function MyPageContent() {
                         setActivityPage((page) => Math.max(1, page - 1))
                       }
                       disabled={activityPage === 1}
-                      className="inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="cursor-pointer inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       前へ
                     </button>
@@ -2402,7 +2440,7 @@ function MyPageContent() {
                         <button
                           type="button"
                           onClick={() => setActivityPage(1)}
-                          className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          className="cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                         >
                           1
                         </button>
@@ -2417,7 +2455,7 @@ function MyPageContent() {
                         key={page}
                         type="button"
                         onClick={() => setActivityPage(page)}
-                        className={`inline-flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
+                        className={`cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
                           activityPage === page
                             ? "border-[#001e43] bg-[#001e43] text-white"
                             : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
@@ -2440,7 +2478,7 @@ function MyPageContent() {
                         <button
                           type="button"
                           onClick={() => setActivityPage(activityTotalPages)}
-                          className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          className="cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                         >
                           {activityTotalPages}
                         </button>
@@ -2465,7 +2503,7 @@ function MyPageContent() {
             </section>
           </>
         ) : topTab === "deals" ? (
-          <section className="bg-white sm:mt-4 sm:rounded-xl sm:border sm:border-slate-200">
+          <section ref={myDealsSectionRef} className="bg-white sm:mt-4 sm:rounded-xl sm:border sm:border-slate-200">
             <div className="flex flex-col gap-4 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
               <div>
                 <h1 className="text-xl font-bold text-slate-900">投稿したディール</h1>
@@ -2591,7 +2629,18 @@ function MyPageContent() {
                             編集
                           </Link>
 
-                          <label className="flex cursor-pointer items-center gap-2">
+                          <label
+                            className={`flex items-center gap-2 ${
+                              deal.is_expired && isDealPastExpiry(deal)
+                                ? "cursor-not-allowed"
+                                : "cursor-pointer"
+                            }`}
+                            title={
+                              deal.is_expired && isDealPastExpiry(deal)
+                                ? "有効期限を未来の日時に変更すると再公開できます。"
+                                : undefined
+                            }
+                          >
                             <span className="relative inline-flex h-6 w-11 flex-none items-center">
                               <input
                                 type="checkbox"
@@ -2602,7 +2651,10 @@ function MyPageContent() {
                                     !e.target.checked
                                   )
                                 }
-                                disabled={updatingDealStatusId === deal.id}
+                                disabled={
+                                  updatingDealStatusId === deal.id ||
+                                  (deal.is_expired === true && isDealPastExpiry(deal))
+                                }
                                 className="peer sr-only"
                                 aria-label={
                                   deal.is_expired ? "公開に戻す" : "公開中"
@@ -2641,7 +2693,18 @@ function MyPageContent() {
                           編集
                         </Link>
 
-                        <label className="mt-3 flex cursor-pointer items-center gap-2">
+                        <label
+                          className={`mt-3 flex items-center gap-2 ${
+                            deal.is_expired && isDealPastExpiry(deal)
+                              ? "cursor-not-allowed"
+                              : "cursor-pointer"
+                          }`}
+                          title={
+                            deal.is_expired && isDealPastExpiry(deal)
+                              ? "有効期限を未来の日時に変更すると再公開できます。"
+                              : undefined
+                          }
+                        >
 
                           <span className="relative inline-flex h-6 w-11 flex-none items-center">
                             <input
@@ -2653,7 +2716,10 @@ function MyPageContent() {
                                   !e.target.checked
                                 )
                               }
-                              disabled={updatingDealStatusId === deal.id}
+                              disabled={
+                                updatingDealStatusId === deal.id ||
+                                (deal.is_expired === true && isDealPastExpiry(deal))
+                              }
                               className="peer sr-only"
                               aria-label={
                                 deal.is_expired ? "公開に戻す" : "公開中"
@@ -2693,11 +2759,9 @@ function MyPageContent() {
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={() =>
-                      setMyDealsPage((page) => Math.max(1, page - 1))
-                    }
+                    onClick={() => handleMyDealsPageChange(myDealsPage - 1)}
                     disabled={myDealsPage === 1}
-                    className="inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="cursor-pointer inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     前へ
                   </button>
@@ -2706,8 +2770,8 @@ function MyPageContent() {
                     <>
                       <button
                         type="button"
-                        onClick={() => setMyDealsPage(1)}
-                        className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        onClick={() => handleMyDealsPageChange(1)}
+                        className="cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                       >
                         1
                       </button>
@@ -2721,8 +2785,8 @@ function MyPageContent() {
                     <button
                       key={page}
                       type="button"
-                      onClick={() => setMyDealsPage(page)}
-                      className={`inline-flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
+                      onClick={() => handleMyDealsPageChange(page)}
+                      className={`cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
                         myDealsPage === page
                           ? "border-[#001e43] bg-[#001e43] text-white"
                           : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
@@ -2741,8 +2805,8 @@ function MyPageContent() {
                       ) : null}
                       <button
                         type="button"
-                        onClick={() => setMyDealsPage(myDealsTotalPages)}
-                        className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        onClick={() => handleMyDealsPageChange(myDealsTotalPages)}
+                        className="cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                       >
                         {myDealsTotalPages}
                       </button>
@@ -2751,13 +2815,9 @@ function MyPageContent() {
 
                   <button
                     type="button"
-                    onClick={() =>
-                      setMyDealsPage((page) =>
-                        Math.min(myDealsTotalPages, page + 1)
-                      )
-                    }
+                    onClick={() => handleMyDealsPageChange(myDealsPage + 1)}
                     disabled={myDealsPage === myDealsTotalPages}
-                    className="inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="cursor-pointer inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     次へ
                   </button>
@@ -2839,7 +2899,7 @@ function MyPageContent() {
                             type="button"
                             onClick={() => handleRemoveSaved(deal.id)}
                             disabled={removingSavedId === deal.id}
-                            className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50"
+                            className="cursor-pointer text-xs font-semibold text-red-600 hover:underline disabled:opacity-50"
                           >
                             {removingSavedId === deal.id ? "削除中…" : "削除"}
                           </button>
@@ -2855,7 +2915,7 @@ function MyPageContent() {
                           type="button"
                           onClick={() => handleRemoveSaved(deal.id)}
                           disabled={removingSavedId === deal.id}
-                          className="mt-3 rounded-md border border-slate-300 bg-white px-4 py-1.5 text-xs font-semibold text-slate-700 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
+                          className="cursor-pointer mt-3 rounded-md border border-slate-300 bg-white px-4 py-1.5 text-xs font-semibold text-slate-700 hover:border-red-300 hover:text-red-600 disabled:opacity-50"
                         >
                           {removingSavedId === deal.id ? "削除中…" : "削除"}
                         </button>
@@ -2889,7 +2949,7 @@ function MyPageContent() {
                       <button
                         type="button"
                         onClick={() => setSavedPage(1)}
-                        className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        className="cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                       >
                         1
                       </button>
@@ -2904,7 +2964,7 @@ function MyPageContent() {
                       key={page}
                       type="button"
                       onClick={() => setSavedPage(page)}
-                      className={`inline-flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
+                      className={`cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border px-2 text-xs font-semibold ${
                         savedPage === page
                           ? "border-[#001e43] bg-[#001e43] text-white"
                           : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
@@ -2924,7 +2984,7 @@ function MyPageContent() {
                       <button
                         type="button"
                         onClick={() => setSavedPage(savedTotalPages)}
-                        className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        className="cursor-pointer inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                       >
                         {savedTotalPages}
                       </button>
