@@ -162,7 +162,7 @@ async function generateAiComment(item: RankedSaleItem): Promise<string> {
     itemDescription: item.itemDescription,
   };
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await fetch("https\://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -248,11 +248,29 @@ export async function GET(request: NextRequest) {
     const deduped = new Map<string, RankedSaleItem>();
 
     for (const target of RANKING_TARGETS) {
-      const items = await fetchCurrentRakutenSaleRankingItems({
-        maxRank: MAX_RANK,
-        period: "realtime",
-        genreId: target.genreId,
-      });
+      let items: RakutenSaleRankingItem[];
+
+      try {
+        items = await fetchCurrentRakutenSaleRankingItems({
+          maxRank: MAX_RANK,
+          period: "realtime",
+          genreId: target.genreId,
+        });
+      } catch (error) {
+        const message = String(error instanceof Error ? error.message : error);
+
+        if (
+          message.includes("楽天ランキングAPIエラー (404)") &&
+          message.includes("This genre data does not exist")
+        ) {
+          console.warn(
+            `[rakuten-auto-post] Ranking genre unavailable: ${target.name} (${target.genreId ?? "overall"}). Skipping target.`
+          );
+          continue;
+        }
+
+        throw error;
+      }
 
       for (const item of items) {
         const source = {
