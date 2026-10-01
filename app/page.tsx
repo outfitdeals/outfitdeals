@@ -136,8 +136,8 @@ function NewBadge({ compact = false }: { compact?: boolean }) {
     <span
       className={
         compact
-          ? "inline-flex items-center rounded bg-[#d43b16] px-1.5 py-[1px] text-[9px] font-bold leading-none text-white"
-          : "inline-flex items-center rounded bg-[#d43b16] px-2 py-[2px] text-[10px] font-bold leading-none text-white"
+          ? "inline-flex self-center items-center rounded bg-[#d43b16] px-1.5 py-[1px] text-[9px] font-bold leading-none text-white"
+          : "inline-flex self-center items-center rounded bg-[#d43b16] px-2 py-[2px] text-[10px] font-bold leading-none text-white"
       }
     >
       NEW
