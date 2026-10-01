@@ -2,7 +2,7 @@
 
 import React, { Suspense, useMemo, useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { MessageSquare, ThumbsUp, Bookmark, SlidersHorizontal, Grid2X2, LayoutList, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, Truck } from "lucide-react";
+import { MessageSquare, ThumbsUp, Bookmark, SlidersHorizontal, Grid2X2, LayoutList, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { useSearchParams } from "next/navigation";
 import RightSidebar, { type SidebarDeal } from "@/app/components/RightSidebar";
@@ -131,19 +131,26 @@ function matchesCategory(row: DealsRow, activeCategory: CategoryFilter) {
   return (row.category ?? "other") === activeCategory;
 }
 
-function FreeShippingBadge({ compact = false }: { compact?: boolean }) {
+function NewBadge({ compact = false }: { compact?: boolean }) {
   return (
     <span
       className={
         compact
-          ? "inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-[1px] text-[9px] font-semibold leading-none text-emerald-700 ring-1 ring-inset ring-emerald-200"
-          : "inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-[2px] text-[10px] font-semibold leading-none text-emerald-700 ring-1 ring-inset ring-emerald-200"
+          ? "inline-flex items-center rounded bg-[#d43b16] px-1.5 py-[1px] text-[9px] font-bold leading-none text-white"
+          : "inline-flex items-center rounded bg-[#d43b16] px-2 py-[2px] text-[10px] font-bold leading-none text-white"
       }
     >
-      <Truck className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
-      送料無料
+      NEW
     </span>
   );
+}
+
+function isDealNew(createdAt: string | null | undefined, nowMs = Date.now()) {
+  if (!createdAt) return false;
+  const createdAtMs = new Date(createdAt).getTime();
+  if (!Number.isFinite(createdAtMs)) return false;
+  const ageMs = nowMs - createdAtMs;
+  return ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000;
 }
 
 function normalizeDealSlugPart(value: string | null | undefined) {
@@ -328,7 +335,7 @@ function Card({
               {yen(d.orig)}
             </div>
           ) : null}
-          {d.freeShipping ? <FreeShippingBadge /> : null}
+          {d.isNew ? <NewBadge /> : null}
         </div>
 
         <div className="mt-1 flex items-center justify-between gap-2">
@@ -466,7 +473,7 @@ function MobileRecommendCard({
               {yen(d.orig)}
             </span>
           ) : null}
-          {d.freeShipping ? <FreeShippingBadge compact /> : null}
+          {d.isNew ? <NewBadge compact /> : null}
         </div>
 
         <div className="mt-1 truncate text-[10px] text-slate-400">{d.shopName}</div>
@@ -564,7 +571,7 @@ function MobileDealRow({
                 {yen(d.orig)}
               </span>
             ) : null}
-            {d.freeShipping ? <FreeShippingBadge compact /> : null}
+            {d.isNew ? <NewBadge compact /> : null}
           </div>
 
           <div className="mt-1 truncate text-[11px] text-slate-400">
@@ -689,7 +696,7 @@ function SearchDealRow({
               </span>
             ) : null}
 
-            {row.free_shipping ? <FreeShippingBadge /> : null}
+            {isDealNew(row.created_at) ? <NewBadge /> : null}
           </div>
 
           <div className="mt-1.5 truncate text-[13px] text-slate-700">
@@ -835,7 +842,7 @@ function SearchDealGridCard({
             </span>
           ) : null}
 
-          {row.free_shipping ? <FreeShippingBadge compact /> : null}
+          {isDealNew(row.created_at) ? <NewBadge compact /> : null}
         </div>
 
         {discountPercent !== null ? (
@@ -1427,6 +1434,16 @@ function PageContent() {
       if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("share deal error:", error);
     }
+  }, []);
+
+  const [newBadgeNowMs, setNewBadgeNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      setNewBadgeNowMs(Date.now());
+    }, 60_000);
+
+    return () => window.clearInterval(timerId);
   }, []);
 
   const [viewportWidth, setViewportWidth] = useState<number>(1600);
@@ -3881,6 +3898,7 @@ function PageContent() {
                     linkUrl: undefined,
                     category: row.category ?? null,
                     freeShipping: !!row.free_shipping,
+                    isNew: isDealNew(row.created_at, newBadgeNowMs),
                   };
 
                   const isLiked = row.has_liked === true;
@@ -3949,6 +3967,7 @@ function PageContent() {
                   linkUrl: undefined,
                   category: row.category ?? null,
                   freeShipping: !!row.free_shipping,
+                  isNew: isDealNew(row.created_at, newBadgeNowMs),
                 };
 
                 const isLiked = row.has_liked === true;
@@ -4104,6 +4123,7 @@ function PageContent() {
                         linkUrl: undefined,
                         category: row.category ?? null,
                         freeShipping: !!row.free_shipping,
+                        isNew: isDealNew(row.created_at, newBadgeNowMs),
                       };
 
                       const isLiked = row.has_liked === true;
@@ -4170,6 +4190,7 @@ function PageContent() {
                         linkUrl: undefined,
                         category: row.category ?? null,
                         freeShipping: !!row.free_shipping,
+                        isNew: isDealNew(row.created_at, newBadgeNowMs),
                       };
 
                       const isLiked = row.has_liked === true;
