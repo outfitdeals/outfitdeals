@@ -5,6 +5,8 @@ import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   Loader2,
   RefreshCw,
@@ -18,6 +20,7 @@ type DealRow = {
   user_id: string | null;
   title: string | null;
   created_at: string | null;
+  expires_at: string | null;
   is_expired: boolean | null;
   public_id: number | string | null;
   shop_id: string | null;
@@ -37,6 +40,8 @@ type ManagedDeal = DealRow & {
 };
 
 type Filter = "all" | "visible" | "expired";
+type SortKey = "title" | "created_at" | "expires_at" | "likes_count" | "comments_count" | "is_expired";
+type SortDirection = "asc" | "desc";
 type BulkAction = "publish" | "expire" | "delete";
 
 const PAGE_SIZE = 100;
@@ -79,6 +84,8 @@ export default function AdminDealsPage() {
   const [expiredCount, setExpiredCount] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [sortKey, setSortKey] = useState<SortKey>("created_at");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [errorMessage, setErrorMessage] = useState("");
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -86,7 +93,12 @@ export default function AdminDealsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState("");
 
-  const loadDeals = async (page = currentPage, activeFilter: Filter = filter) => {
+  const loadDeals = async (
+    page = currentPage,
+    activeFilter: Filter = filter,
+    activeSortKey: SortKey = sortKey,
+    activeSortDirection: SortDirection = sortDirection
+  ) => {
     setLoading(true);
     setErrorMessage("");
 
@@ -96,10 +108,13 @@ export default function AdminDealsPage() {
     let dealsQuery = supabase
       .from("deals")
       .select(
-        "id, user_id, title, created_at, is_expired, public_id, shop_id, item_id, moderation_status, likes_count, comments_count",
+        "id, user_id, title, created_at, expires_at, is_expired, public_id, shop_id, item_id, moderation_status, likes_count, comments_count",
         { count: "exact" }
       )
-      .order("created_at", { ascending: false });
+      .order(activeSortKey, {
+        ascending: activeSortDirection === "asc",
+        nullsFirst: false,
+      });
 
     if (activeFilter === "expired") {
       dealsQuery = dealsQuery.eq("is_expired", true);
@@ -230,6 +245,18 @@ export default function AdminDealsPage() {
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
+  };
+
+  const changeSort = async (nextSortKey: SortKey) => {
+    if (loading) return;
+
+    const nextDirection: SortDirection =
+      sortKey === nextSortKey && sortDirection === "desc" ? "asc" : "desc";
+
+    setSortKey(nextSortKey);
+    setSortDirection(nextDirection);
+    setCurrentPage(1);
+    await loadDeals(1, filter, nextSortKey, nextDirection);
   };
 
   const visibleFilteredIds = useMemo(
@@ -553,12 +580,57 @@ export default function AdminDealsPage() {
                         aria-label="表示中の投稿をすべて選択"
                       />
                     </th>
-                    <th className="w-[33%] px-3 py-3">投稿</th>
-                    <th className="w-[16%] px-3 py-3">投稿者</th>
-                    <th className="w-[17%] px-3 py-3">投稿日</th>
-                    <th className="w-[8%] px-3 py-3 text-center">いいね</th>
-                    <th className="w-[9%] px-3 py-3 text-center">コメント</th>
-                    <th className="w-[12%] px-3 py-3">状態</th>
+                    <SortableHeader
+                      label="投稿"
+                      sortKey="title"
+                      activeSortKey={sortKey}
+                      direction={sortDirection}
+                      onSort={changeSort}
+                      className="w-[25%]"
+                    />
+                    <th className="w-[13%] px-3 py-3">投稿者</th>
+                    <SortableHeader
+                      label="投稿日"
+                      sortKey="created_at"
+                      activeSortKey={sortKey}
+                      direction={sortDirection}
+                      onSort={changeSort}
+                      className="w-[13%]"
+                    />
+                    <SortableHeader
+                      label="販売終了日時"
+                      sortKey="expires_at"
+                      activeSortKey={sortKey}
+                      direction={sortDirection}
+                      onSort={changeSort}
+                      className="w-[15%]"
+                    />
+                    <SortableHeader
+                      label="いいね"
+                      sortKey="likes_count"
+                      activeSortKey={sortKey}
+                      direction={sortDirection}
+                      onSort={changeSort}
+                      className="w-[8%] text-center"
+                      centered
+                    />
+                    <SortableHeader
+                      label="コメント"
+                      sortKey="comments_count"
+                      activeSortKey={sortKey}
+                      direction={sortDirection}
+                      onSort={changeSort}
+                      className="w-[9%] text-center"
+                      centered
+                    />
+                    <SortableHeader
+                      label="状態"
+                      sortKey="is_expired"
+                      activeSortKey={sortKey}
+                      direction={sortDirection}
+                      onSort={changeSort}
+                      className="w-[12%]"
+                    />
                   </tr>
                 </thead>
 
@@ -615,6 +687,10 @@ export default function AdminDealsPage() {
 
                       <td className="whitespace-nowrap px-3 py-4 text-xs text-slate-600">
                         {formatJapanDateTime(deal.created_at)}
+                      </td>
+
+                      <td className="whitespace-nowrap px-3 py-4 text-xs text-slate-600">
+                        {formatJapanDateTime(deal.expires_at)}
                       </td>
 
                       <td className="px-3 py-4 text-center text-sm font-semibold text-slate-700">
@@ -678,6 +754,10 @@ export default function AdminDealsPage() {
                         <MobileInfo
                           label="投稿日"
                           value={formatJapanDateTime(deal.created_at)}
+                        />
+                        <MobileInfo
+                          label="販売終了日時"
+                          value={formatJapanDateTime(deal.expires_at)}
                         />
                         <MobileInfo
                           label="いいね"
@@ -871,6 +951,52 @@ export default function AdminDealsPage() {
         </div>
       ) : null}
     </>
+  );
+}
+
+function SortableHeader({
+  label,
+  sortKey,
+  activeSortKey,
+  direction,
+  onSort,
+  className = "",
+  centered = false,
+}: {
+  label: string;
+  sortKey: SortKey;
+  activeSortKey: SortKey;
+  direction: SortDirection;
+  onSort: (sortKey: SortKey) => void | Promise<void>;
+  className?: string;
+  centered?: boolean;
+}) {
+  const active = activeSortKey === sortKey;
+
+  return (
+    <th className={`${className} px-3 py-3`}>
+      <button
+        type="button"
+        onClick={() => void onSort(sortKey)}
+        className={`inline-flex cursor-pointer items-center gap-1 transition hover:text-[#006888] ${
+          centered ? "justify-center" : "justify-start"
+        } ${active ? "text-[#006888]" : ""}`}
+        aria-label={`${label}で${
+          active && direction === "desc" ? "昇順" : "降順"
+        }に並び替え`}
+      >
+        <span>{label}</span>
+        {active ? (
+          direction === "asc" ? (
+            <ChevronUp className="h-3.5 w-3.5 flex-none" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 flex-none" />
+          )
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 flex-none opacity-25" />
+        )}
+      </button>
+    </th>
   );
 }
 
