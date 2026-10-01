@@ -753,6 +753,7 @@ function SearchDealRow({
 
             <time className="flex-none text-[10px] text-slate-400 sm:text-[11px]">
               {new Date(row.created_at).toLocaleString("ja-JP", {
+                timeZone: "Asia/Tokyo",
                 month: "2-digit",
                 day: "2-digit",
                 year: "numeric",
@@ -1152,21 +1153,31 @@ function formatDealPostedAt(value: string) {
   const date = new Date(value);
   const now = new Date();
 
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfPostedDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const dayDiff = Math.round(
-    (startOfToday.getTime() - startOfPostedDay.getTime()) / 86_400_000
-  );
+  const tokyoDateKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  const postedDay = tokyoDateKey.format(date);
+  const today = tokyoDateKey.format(now);
+
+  const tokyoYesterday = new Date(now.getTime() - 86_400_000);
+  const yesterday = tokyoDateKey.format(tokyoYesterday);
+
   const time = date.toLocaleTimeString("ja-JP", {
+    timeZone: "Asia/Tokyo",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   });
 
-  if (dayDiff === 0) return `今日 ${time}`;
-  if (dayDiff === 1) return `昨日 ${time}`;
+  if (postedDay === today) return `今日 ${time}`;
+  if (postedDay === yesterday) return `昨日 ${time}`;
 
   return date.toLocaleString("ja-JP", {
+    timeZone: "Asia/Tokyo",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
