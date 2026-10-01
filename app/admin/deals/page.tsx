@@ -23,6 +23,8 @@ type DealRow = {
   shop_id: string | null;
   item_id: string | null;
   moderation_status: "visible" | "hidden";
+  likes_count: number | null;
+  comments_count: number | null;
 };
 
 type ProfileRow = {
@@ -72,6 +74,7 @@ export default function AdminDealsPage() {
   const [deals, setDeals] = useState<ManagedDeal[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [filteredTotalCount, setFilteredTotalCount] = useState(0);
   const [visibleCount, setVisibleCount] = useState(0);
   const [expiredCount, setExpiredCount] = useState(0);
   const [searchText, setSearchText] = useState("");
@@ -83,26 +86,35 @@ export default function AdminDealsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState("");
 
-  const loadDeals = async (page = currentPage) => {
+  const loadDeals = async (page = currentPage, activeFilter: Filter = filter) => {
     setLoading(true);
     setErrorMessage("");
 
     const from = (page - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
+    let dealsQuery = supabase
+      .from("deals")
+      .select(
+        "id, user_id, title, created_at, is_expired, public_id, shop_id, item_id, moderation_status, likes_count, comments_count",
+        { count: "exact" }
+      )
+      .order("created_at", { ascending: false });
+
+    if (activeFilter === "expired") {
+      dealsQuery = dealsQuery.eq("is_expired", true);
+    } else if (activeFilter === "visible") {
+      dealsQuery = dealsQuery.eq("is_expired", false);
+    }
+
     const [
-      { data: dealRows, error: dealsError, count },
+      { data: dealRows, error: dealsError, count: filteredCount },
+      { count: allTotal, error: totalCountError },
       { count: visibleTotal, error: visibleCountError },
       { count: expiredTotal, error: expiredCountError },
     ] = await Promise.all([
-      supabase
-        .from("deals")
-        .select(
-          "id, user_id, title, created_at, is_expired, public_id, shop_id, item_id, moderation_status",
-          { count: "exact" }
-        )
-        .order("created_at", { ascending: false })
-        .range(from, to),
+      dealsQuery.range(from, to),
+      supabase.from("deals").select("id", { count: "exact", head: true }),
       supabase.from("deals").select("id", { count: "exact", head: true }).eq("is_expired", false),
       supabase.from("deals").select("id", { count: "exact", head: true }).eq("is_expired", true),
     ]);
@@ -114,15 +126,19 @@ export default function AdminDealsPage() {
       return;
     }
 
-    if (visibleCountError || expiredCountError) {
-      console.error("Admin deal summary count error:", visibleCountError ?? expiredCountError);
+    if (totalCountError || visibleCountError || expiredCountError) {
+      console.error(
+        "Admin deal summary count error:",
+        totalCountError ?? visibleCountError ?? expiredCountError
+      );
       setErrorMessage("投稿件数を取得できませんでした。");
       setLoading(false);
       return;
     }
 
     const rows = (dealRows ?? []) as DealRow[];
-    setTotalCount(count ?? 0);
+    setTotalCount(allTotal ?? 0);
+    setFilteredTotalCount(filteredCount ?? 0);
     setVisibleCount(visibleTotal ?? 0);
     setExpiredCount(expiredTotal ?? 0);
 
@@ -192,7 +208,7 @@ export default function AdminDealsPage() {
     });
   }, [deals, filter, searchText]);
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filteredTotalCount / PAGE_SIZE));
 
   const pageNumbers = useMemo(() => {
     const pages: number[] = [];
@@ -373,11 +389,20 @@ export default function AdminDealsPage() {
     setSelectedIds(new Set());
     setSubmitting(false);
 
-    const remainingCount =
-      pendingAction === "delete"
-        ? Math.max(0, totalCount - ids.length)
-        : totalCount;
-    const nextTotalPages = Math.max(1, Math.ceil(remainingCount / PAGE_SIZE));
+    const selectedLeavingCurrentFilter =
+      pendingAction === "delete" ||
+      (filter === "expired" && pendingAction === "publish") ||
+      (filter === "visible" && pendingAction === "expire")
+        ? ids.length
+        : 0;
+    const remainingFilteredCount = Math.max(
+      0,
+      filteredTotalCount - selectedLeavingCurrentFilter
+    );
+    const nextTotalPages = Math.max(
+      1,
+      Math.ceil(remainingFilteredCount / PAGE_SIZE)
+    );
     const pageToLoad = Math.min(currentPage, nextTotalPages);
 
     if (pageToLoad !== currentPage) setCurrentPage(pageToLoad);
@@ -419,9 +444,12 @@ export default function AdminDealsPage() {
               <div className="flex gap-2">
                 <select
                   value={filter}
-                  onChange={(event) =>
-                    setFilter(event.target.value as Filter)
-                  }
+                  onChange={(event) => {
+                    const nextFilter = event.target.value as Filter;
+                    setFilter(nextFilter);
+                    setCurrentPage(1);
+                    void loadDeals(1, nextFilter);
+                  }}
                   className="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-[#006888]"
                   aria-label="投稿状態で絞り込み"
                 >
@@ -525,10 +553,12 @@ export default function AdminDealsPage() {
                         aria-label="表示中の投稿をすべて選択"
                       />
                     </th>
-                    <th className="w-[45%] px-3 py-3">投稿</th>
-                    <th className="w-[18%] px-3 py-3">投稿者</th>
-                    <th className="w-[19%] px-3 py-3">投稿日</th>
-                    <th className="w-[13%] px-3 py-3">状態</th>
+                    <th className="w-[33%] px-3 py-3">投稿</th>
+                    <th className="w-[16%] px-3 py-3">投稿者</th>
+                    <th className="w-[17%] px-3 py-3">投稿日</th>
+                    <th className="w-[8%] px-3 py-3 text-center">いいね</th>
+                    <th className="w-[9%] px-3 py-3 text-center">コメント</th>
+                    <th className="w-[12%] px-3 py-3">状態</th>
                   </tr>
                 </thead>
 
@@ -587,6 +617,14 @@ export default function AdminDealsPage() {
                         {formatJapanDateTime(deal.created_at)}
                       </td>
 
+                      <td className="px-3 py-4 text-center text-sm font-semibold text-slate-700">
+                        {Math.max(0, Number(deal.likes_count ?? 0)).toLocaleString("ja-JP")}
+                      </td>
+
+                      <td className="px-3 py-4 text-center text-sm font-semibold text-slate-700">
+                        {Math.max(0, Number(deal.comments_count ?? 0)).toLocaleString("ja-JP")}
+                      </td>
+
                       <td className="px-3 py-4">
                         <DealStatus deal={deal} />
                       </td>
@@ -641,6 +679,14 @@ export default function AdminDealsPage() {
                           label="投稿日"
                           value={formatJapanDateTime(deal.created_at)}
                         />
+                        <MobileInfo
+                          label="いいね"
+                          value={Math.max(0, Number(deal.likes_count ?? 0)).toLocaleString("ja-JP")}
+                        />
+                        <MobileInfo
+                          label="コメント"
+                          value={Math.max(0, Number(deal.comments_count ?? 0)).toLocaleString("ja-JP")}
+                        />
                       </div>
                     </div>
                   </div>
@@ -653,12 +699,12 @@ export default function AdminDealsPage() {
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-slate-400">
-          全{totalCount.toLocaleString("ja-JP")}件中{" "}
-          {totalCount === 0
+          全{filteredTotalCount.toLocaleString("ja-JP")}件中{" "}
+          {filteredTotalCount === 0
             ? 0
             : ((currentPage - 1) * PAGE_SIZE + 1).toLocaleString("ja-JP")}
           〜
-          {Math.min(currentPage * PAGE_SIZE, totalCount).toLocaleString("ja-JP")}
+          {Math.min(currentPage * PAGE_SIZE, filteredTotalCount).toLocaleString("ja-JP")}
           件を表示しています。日時は日本時間です。
         </p>
 

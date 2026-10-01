@@ -18,6 +18,8 @@ type ProfileRow = {
   avatar_updated_at: string | null;
   created_at: string | null;
   user_badge: string | null;
+  deal_likes_received: number | null;
+  comment_likes_received: number | null;
 };
 
 type DealRow = {
@@ -64,7 +66,7 @@ type ActivityItem = {
 
 type Tab = "deals" | "comments";
 
-const PLACEHOLDER_IMG = "https://via.placeholder.com/160x160?text=No+Image";
+const PLACEHOLDER_IMG = "https\://via.placeholder.com/160x160?text=No+Image";
 const PAGE_SIZE = 20;
 
 function normalizeDealSlugPart(value: string | null | undefined) {
@@ -72,7 +74,7 @@ function normalizeDealSlugPart(value: string | null | undefined) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._~-]/g, "-")
+    .replace(/[^a-z0-9._\~-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
@@ -236,7 +238,9 @@ export default function PublicUserPage() {
       ] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, username, avatar_url, avatar_updated_at, created_at, user_badge")
+          .select(
+            "id, username, avatar_url, avatar_updated_at, created_at, user_badge, deal_likes_received, comment_likes_received"
+          )
           .eq("id", userId)
           .maybeSingle(),
         supabase
@@ -435,6 +439,8 @@ export default function PublicUserPage() {
         avatar_updated_at: profileData.avatar_updated_at ?? null,
         created_at: profileData.created_at ?? null,
         user_badge: profileData.user_badge ?? null,
+        deal_likes_received: profileData.deal_likes_received ?? 0,
+        comment_likes_received: profileData.comment_likes_received ?? 0,
       });
       setDeals(mappedDeals);
       setActivities(nextActivities);
@@ -507,22 +513,14 @@ export default function PublicUserPage() {
     return activities.slice(start, start + PAGE_SIZE);
   }, [activities, commentPage]);
 
-  const dealLikesReceived = useMemo(
-    () =>
-      deals.reduce(
-        (sum, deal) => sum + Math.max(0, Number(deal.likes_count ?? 0)),
-        0
-      ),
-    [deals]
+  const dealLikesReceived = Math.max(
+    0,
+    Number(profile?.deal_likes_received ?? 0)
   );
 
-  const commentLikesReceived = useMemo(
-    () =>
-      activities.reduce(
-        (sum, item) => sum + Math.max(0, Number(item.likeCount ?? 0)),
-        0
-      ),
-    [activities]
+  const commentLikesReceived = Math.max(
+    0,
+    Number(profile?.comment_likes_received ?? 0)
   );
 
   if (loading) {
