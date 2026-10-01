@@ -12,7 +12,7 @@ import MobileBottomNav from "./components/MobileBottomNav";
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
-const siteTitle = "トクミッケ｜みんなで見つけるお得・セール情報";
+const siteTitle = "トクミッケ｜みんなで“おトク”を見つけてシェアするコミュニティ";
 const siteDescription =
   "トクミッケは、ファッション、家電、日用品、美容など、みんなが見つけたお得なセール・割引情報を共有できるディールサイトです。";
 

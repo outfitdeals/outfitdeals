@@ -72,6 +72,8 @@ export default function AdminDealsPage() {
   const [deals, setDeals] = useState<ManagedDeal[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [visibleCount, setVisibleCount] = useState(0);
+  const [expiredCount, setExpiredCount] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [errorMessage, setErrorMessage] = useState("");
@@ -88,14 +90,22 @@ export default function AdminDealsPage() {
     const from = (page - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data: dealRows, error: dealsError, count } = await supabase
-      .from("deals")
-      .select(
-        "id, user_id, title, created_at, is_expired, public_id, shop_id, item_id, moderation_status",
-        { count: "exact" }
-      )
-      .order("created_at", { ascending: false })
-      .range(from, to);
+    const [
+      { data: dealRows, error: dealsError, count },
+      { count: visibleTotal, error: visibleCountError },
+      { count: expiredTotal, error: expiredCountError },
+    ] = await Promise.all([
+      supabase
+        .from("deals")
+        .select(
+          "id, user_id, title, created_at, is_expired, public_id, shop_id, item_id, moderation_status",
+          { count: "exact" }
+        )
+        .order("created_at", { ascending: false })
+        .range(from, to),
+      supabase.from("deals").select("id", { count: "exact", head: true }).eq("is_expired", false),
+      supabase.from("deals").select("id", { count: "exact", head: true }).eq("is_expired", true),
+    ]);
 
     if (dealsError) {
       console.error("Admin deals load error:", dealsError);
@@ -104,8 +114,17 @@ export default function AdminDealsPage() {
       return;
     }
 
+    if (visibleCountError || expiredCountError) {
+      console.error("Admin deal summary count error:", visibleCountError ?? expiredCountError);
+      setErrorMessage("投稿件数を取得できませんでした。");
+      setLoading(false);
+      return;
+    }
+
     const rows = (dealRows ?? []) as DealRow[];
     setTotalCount(count ?? 0);
+    setVisibleCount(visibleTotal ?? 0);
+    setExpiredCount(expiredTotal ?? 0);
 
     const userIds = Array.from(
       new Set(
@@ -196,16 +215,6 @@ export default function AdminDealsPage() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   };
-
-  const expiredCount = useMemo(
-    () => deals.filter((deal) => Boolean(deal.is_expired)).length,
-    [deals]
-  );
-
-  const visibleCount = useMemo(
-    () => deals.filter((deal) => !deal.is_expired).length,
-    [deals]
-  );
 
   const visibleFilteredIds = useMemo(
     () => filteredDeals.map((deal) => deal.id),
