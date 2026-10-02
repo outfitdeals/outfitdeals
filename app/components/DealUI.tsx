@@ -8,6 +8,7 @@ export function yen(n: number | null | undefined) {
 
 export function MarketTag({ market }: { market: string }) {
   const isRakuten = market === "楽天市場";
+  const isAmazon = market === "Amazon";
 
   if (isRakuten) {
     return (
@@ -17,6 +18,18 @@ export function MarketTag({ market }: { market: string }) {
           alt="楽天市場"
           className="h-4 w-auto object-contain"
         />
+      </span>
+    );
+  }
+
+  if (isAmazon) {
+    return (
+      <span
+        aria-label="Amazon"
+        title="Amazon"
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-black text-[12px] font-bold leading-none text-[#ff9900]"
+      >
+        a
       </span>
     );
   }
