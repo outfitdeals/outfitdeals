@@ -669,6 +669,13 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
   const [disliking, setDisliking] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const redirectToLogin = () => {
+    if (typeof window === "undefined") return;
+
+    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.assign(`/auth?next=${encodeURIComponent(returnTo)}`);
+  };
+
   const [openDealDetails, setOpenDealDetails] = useState(true);
   const [productDetailsExpanded, setProductDetailsExpanded] = useState(false);
   const [openPosterNote, setOpenPosterNote] = useState(true);
@@ -1686,7 +1693,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
     if (!deal || liking || disliking) return;
     if (deal.user_id === currentUser?.id) return;
     if (!currentUser) {
-      alert("いいね機能を使うには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
     const wasLiked = !!deal.has_liked;
@@ -1765,13 +1772,14 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
 
   const handleSidebarLike = async (dealId: string) => {
     if (!currentUser) {
-      alert("いいね機能を使うには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
 
     const sidebarDeal =
       popular.find((item) => item.id === dealId) ??
-      trending.find((item) => item.id === dealId);
+      trending.find((item) => item.id === dealId) ??
+      endingSoon.find((item) => item.id === dealId);
 
     if (!sidebarDeal) return;
 
@@ -1823,7 +1831,6 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
         setDeal(refreshed[0] ?? deal);
       }
 
-      await loadSide();
     } catch (error) {
       console.error("sidebar like error:", error);
       await loadSide();
@@ -1859,7 +1866,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
 
   const handleSave = async () => {
     if (!currentUser) {
-      alert("保存機能を使うには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
     if (!deal || saving) return;
@@ -1905,7 +1912,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
     if (!deal || liking || disliking) return;
     if (deal.user_id === currentUser?.id) return;
     if (!currentUser) {
-      alert("「イマイチ」に投票するには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
     const wasDisliked = !!deal.has_disliked;
@@ -2033,7 +2040,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
     reaction: CommentReactionType
   ) => {
     if (!currentUser) {
-      alert("コメントにリアクションするには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
 
@@ -2084,7 +2091,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
     reaction: CommentReactionType
   ) => {
     if (!currentUser) {
-      alert("返信にリアクションするには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
 
@@ -2147,7 +2154,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
     _replyUsername?: string | null
   ) => {
     if (!currentUser) {
-      alert("返信するには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
 
@@ -2186,7 +2193,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
 
   const handleReplySubmit = async (commentId: string) => {
     if (!currentUser) {
-      alert("返信するには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
 
@@ -2447,7 +2454,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
           >
             <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white">
               <ThumbsUp
-                className="h-6 w-6 text-[#006888]"
+                className={`h-6 w-6 ${deal.has_liked ? "text-[#006888]" : "text-slate-500"}`}
                 fill={deal.has_liked ? "currentColor" : "none"}
               />
             </span>
@@ -2464,7 +2471,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
           >
             <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-white">
               <ThumbsDown
-                className="h-6 w-6 text-orange-500"
+                className={`h-6 w-6 ${deal.has_disliked ? "text-[#f59e0b]" : "text-slate-500"}`}
                 fill={deal.has_disliked ? "currentColor" : "none"}
               />
             </span>
@@ -2522,6 +2529,17 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
         0
       ),
     [comments]
+  );
+
+  const hasParticipatedInComments = useMemo(
+    () =>
+      !!currentUser?.id &&
+      comments.some(
+        (comment) =>
+          comment.user_id === currentUser.id ||
+          (comment.replies ?? []).some((reply) => reply.user_id === currentUser.id)
+      ),
+    [comments, currentUser?.id]
   );
 
   const visibleDiscussionItems = useMemo<DiscussionItem[]>(() => {
@@ -2986,7 +3004,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
 
   const openReportDialog = (type: "comment" | "reply", id: string) => {
     if (!currentUser) {
-      alert("通報するには、ログインが必要です。");
+      redirectToLogin();
       return;
     }
     setReportMenuKey(null);
@@ -3180,9 +3198,9 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                                   event.stopPropagation();
                                   if (reply.user_id === currentUser?.id) return;
                                   if (!currentUser) {
-                                    alert("返信にリアクションするには、ログインが必要です。");
-                                    return;
-                                  }
+      redirectToLogin();
+      return;
+    }
                                   if (isMobile) {
                                     setReactionPickerKey((prev) =>
                                       prev === `reply:${reply.id}`
@@ -3365,9 +3383,9 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                                   event.stopPropagation();
                                   if (reply.user_id === currentUser?.id) return;
                                   if (!currentUser) {
-                                    alert("返信にリアクションするには、ログインが必要です。");
-                                    return;
-                                  }
+      redirectToLogin();
+      return;
+    }
                                   if (isMobile) {
                                     setReactionPickerKey((prev) =>
                                       prev === `reply:${reply.id}`
@@ -3511,9 +3529,9 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                                   event.stopPropagation();
                                   if (comment.user_id === currentUser?.id) return;
                                   if (!currentUser) {
-                                    alert("コメントにリアクションするには、ログインが必要です。");
-                                    return;
-                                  }
+      redirectToLogin();
+      return;
+    }
                                   if (isMobile) {
                                     setReactionPickerKey((prev) =>
                                       prev === `comment:${comment.id}`
@@ -3604,7 +3622,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
         コメントするにはログインが必要です。
       </p>
       <Link
-        href="/auth"
+        href={`/auth?next=${encodeURIComponent(`${buildDealDetailPath(deal ?? initialDeal)}#comments`)}`}
         className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#006888] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#00546d]"
       >
         ログイン / 新規登録
@@ -3974,7 +3992,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                         }
                       >
                         <ThumbsUp
-                          className="h-5 w-5 text-[#006888]"
+                          className={`h-5 w-5 ${deal.has_liked ? "text-[#006888]" : "text-slate-600"}`}
                           fill={deal.has_liked ? "currentColor" : "none"}
                         />
                         <span className="text-[14px] text-slate-700">
@@ -3986,7 +4004,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                         type="button"
                         onClick={handleBadDeal}
                         disabled={disliking}
-                        className="inline-flex h-full cursor-pointer items-center justify-center px-2 text-orange-500 disabled:cursor-wait disabled:opacity-60"
+                        className={`inline-flex h-full cursor-pointer items-center justify-center px-2 disabled:cursor-wait disabled:opacity-60 ${deal.has_disliked ? "text-[#f59e0b]" : "text-slate-600"}`}
                         title={
                           deal.has_disliked
                             ? "クリックして「イマイチ」投票を取り消す"
@@ -4009,7 +4027,10 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                     className="flex w-[64px] flex-none cursor-pointer flex-col items-center gap-2 text-center text-slate-700"
                   >
                     <span className="inline-flex h-11 w-[60px] items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-white px-2">
-                      <MessageSquare className="h-5 w-5 text-slate-600" />
+                      <MessageSquare
+                        className={`h-5 w-5 ${hasParticipatedInComments ? "text-[#001e43]" : "text-slate-600"}`}
+                        fill={hasParticipatedInComments ? "currentColor" : "none"}
+                      />
                       <span className="text-[14px] text-slate-700">
                         {totalDiscussionCount}
                       </span>
@@ -4234,7 +4255,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                 type="button"
                 onClick={handleBadDeal}
                 disabled={liking || disliking || deal.user_id === currentUser?.id}
-                className="inline-flex h-full cursor-pointer items-center px-2.5 text-orange-500 transition disabled:cursor-wait disabled:opacity-60"
+                className={`inline-flex h-full cursor-pointer items-center px-2.5 transition disabled:cursor-wait disabled:opacity-60 ${deal.has_disliked ? "text-[#f59e0b]" : "text-slate-600"}`}
                 aria-label="イマイチ"
               >
                 <ThumbsDown
@@ -4396,7 +4417,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                 onClick={handleBadDeal}
                 disabled={liking || disliking || deal.user_id === currentUser?.id}
                 className={`inline-flex h-full cursor-pointer items-center justify-center px-3 ${
-                  deal.has_disliked ? "text-orange-500" : "text-orange-500"
+                  deal.has_disliked ? "text-[#f59e0b]" : "text-slate-700"
                 } disabled:cursor-not-allowed disabled:opacity-60`}
                 title={
                   deal.has_disliked
@@ -4571,7 +4592,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                           </div>
                         ) : null}
 
-                        <div className="mt-4 flex items-start justify-between border-t border-slate-200 pt-4">
+                        <div className="mt-4 flex items-start justify-start gap-8 border-t border-slate-200 pt-4">
                           <div className="flex w-[76px] flex-none flex-col items-center gap-1.5 text-center text-slate-700">
                             <span className="inline-flex h-10 w-[76px] items-center justify-center overflow-hidden rounded-full border border-slate-300 bg-white">
                               <button
@@ -4588,7 +4609,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                                 }
                               >
                                 <ThumbsUp
-                                  className="h-4 w-4 text-[#006888]"
+                                  className={`h-4 w-4 ${deal.has_liked ? "text-[#006888]" : "text-slate-700"}`}
                                   fill={deal.has_liked ? "currentColor" : "none"}
                                 />
                                 <span className="text-sm">
@@ -4600,7 +4621,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                                 type="button"
                                 onClick={handleBadDeal}
                                 disabled={disliking}
-                                className="inline-flex h-full cursor-pointer items-center justify-center px-2 text-orange-500 disabled:cursor-wait disabled:opacity-60"
+                                className={`inline-flex h-full cursor-pointer items-center justify-center px-2 disabled:cursor-wait disabled:opacity-60 ${deal.has_disliked ? "text-[#f59e0b]" : "text-slate-600"}`}
                                 title={
                                   deal.has_disliked
                                     ? "クリックして「イマイチ」投票を取り消す"
@@ -4624,7 +4645,10 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                             title="コメントへ移動"
                           >
                             <span className="inline-flex h-10 w-[60px] items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-white px-2">
-                              <MessageSquare className="h-4 w-4" />
+                              <MessageSquare
+                                className={hasParticipatedInComments ? "h-4 w-4 text-[#001e43]" : "h-4 w-4"}
+                                fill={hasParticipatedInComments ? "currentColor" : "none"}
+                              />
                               <span className="text-sm">
                                 {totalDiscussionCount}
                               </span>

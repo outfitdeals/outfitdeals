@@ -356,7 +356,7 @@ function Card({
             disabled={likeDisabled}
             className={
               isLiked
-                ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
+                ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
                 : !canLike
                   ? "inline-flex items-center gap-1 cursor-default text-slate-400"
                   : "inline-flex items-center gap-1 cursor-pointer hover:text-slate-700"
@@ -381,7 +381,7 @@ function Card({
             href={`${d.detailUrl}#comments`}
             className={
               d.hasCommented
-                ? "inline-flex cursor-pointer items-center gap-1 text-[#006888] hover:text-[#00546d]"
+                ? "inline-flex cursor-pointer items-center gap-1 text-[#001e43] hover:text-[#001e43]"
                 : "inline-flex cursor-pointer items-center gap-1 hover:text-slate-700"
             }
             title={d.hasCommented ? "コメント済み" : "コメントを見る"}
@@ -485,7 +485,7 @@ function MobileRecommendCard({
             disabled={likeDisabled}
             className={
               isLiked
-                ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
+                ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
                 : !canLike
                   ? "inline-flex items-center gap-1 text-slate-400"
                   : "inline-flex items-center gap-1 hover:text-slate-700"
@@ -502,7 +502,7 @@ function MobileRecommendCard({
             href={`${d.detailUrl}#comments`}
             className={
               d.hasCommented
-                ? "inline-flex cursor-pointer items-center gap-1 text-[#006888] hover:text-[#00546d]"
+                ? "inline-flex cursor-pointer items-center gap-1 text-[#001e43] hover:text-[#001e43]"
                 : "inline-flex cursor-pointer items-center gap-1 hover:text-slate-700"
             }
             title={d.hasCommented ? "コメント済み" : "コメントを見る"}
@@ -585,7 +585,7 @@ function MobileDealRow({
               disabled={likeDisabled}
               className={
                 isLiked
-                  ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
+                  ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
                   : !canLike
                     ? "inline-flex items-center gap-1 text-slate-400"
                     : "inline-flex items-center gap-1 hover:text-slate-700"
@@ -603,7 +603,7 @@ function MobileDealRow({
               href={`${d.detailUrl}#comments`}
               className={
                 d.hasCommented
-                  ? "inline-flex cursor-pointer items-center gap-1 text-[#006888] hover:text-[#00546d]"
+                  ? "inline-flex cursor-pointer items-center gap-1 text-[#001e43] hover:text-[#001e43]"
                   : "inline-flex cursor-pointer items-center gap-1 hover:text-slate-700"
               }
               title={d.hasCommented ? "コメント済み" : "コメントを見る"}
@@ -711,7 +711,7 @@ function SearchDealRow({
                 disabled={!canLike}
                 className={
                   isLiked
-                    ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
+                    ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
                     : !canLike
                       ? "inline-flex items-center gap-1 text-slate-400"
                       : "inline-flex items-center gap-1 hover:text-slate-700"
@@ -729,7 +729,7 @@ function SearchDealRow({
                 href={`${buildDealDetailPath(row)}#comments`}
                 className={
                   row.has_commented
-                    ? "inline-flex items-center gap-1 text-[#006888] hover:text-[#00546d]"
+                    ? "inline-flex items-center gap-1 text-[#001e43] hover:text-[#001e43]"
                     : "inline-flex items-center gap-1 hover:text-slate-700"
                 }
                 title={row.has_commented ? "コメント済み" : "コメント"}
@@ -862,7 +862,7 @@ function SearchDealGridCard({
             disabled={!canLike}
             className={
               isLiked
-                ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
+                ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
                 : !canLike
                   ? "inline-flex items-center gap-1 text-slate-400"
                   : "inline-flex items-center gap-1 hover:text-slate-700"
@@ -880,7 +880,7 @@ function SearchDealGridCard({
             href={`${buildDealDetailPath(row)}#comments`}
             className={
               row.has_commented
-                ? "inline-flex items-center gap-1 text-[#006888] hover:text-[#00546d]"
+                ? "inline-flex items-center gap-1 text-[#001e43] hover:text-[#001e43]"
                 : "inline-flex items-center gap-1 hover:text-slate-700"
             }
             title={row.has_commented ? "コメント済み" : "コメント"}
@@ -1348,8 +1348,8 @@ function MobileSpotlightDeals({
                       onClick={() => onLike(deal.id)}
                       className={
                         deal.isLiked
-                          ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
-                          : "inline-flex cursor-pointer items-center gap-1 hover:text-[#f59e0b]"
+                          ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
+                          : "inline-flex cursor-pointer items-center gap-1 hover:text-[#006888]"
                       }
                       aria-label={deal.isLiked ? "いいねを取り消す" : "いいね"}
                     >
@@ -1364,7 +1364,7 @@ function MobileSpotlightDeals({
                       href={`${detailUrl}#comments`}
                       className={
                         deal.isCommented
-                          ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
+                          ? "inline-flex cursor-pointer items-center gap-1 text-[#001e43]"
                           : "inline-flex cursor-pointer items-center gap-1 hover:text-[#006888]"
                       }
                       aria-label="コメントを見る"

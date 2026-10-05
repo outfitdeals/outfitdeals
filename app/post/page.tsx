@@ -4,7 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter, useSearchParams } from "next/navigation";
 
-type Market = "楽天市場" | "Yahoo!ショッピング" | "ZOZOTOWN" | "";
+type Market = "楽天市場" | "Amazon" | "Yahoo!ショッピング" | "ZOZOTOWN" | "";
 type DealCategory =
   | "fashion_women"
   | "fashion_men"
@@ -16,6 +16,27 @@ type DealCategory =
   | "sports"
   | "shoes"
   | "other";
+
+type PendingPostDraft = {
+  productUrl: string;
+  title: string;
+  price: string;
+  origPrice: string;
+  market: Market;
+  shopName: string;
+  dealUrl: string;
+  imageUrl: string;
+  comment: string;
+  itemDescription: string;
+  category: DealCategory | "";
+  brand: string;
+  freeShipping: boolean;
+  expiresAt: string;
+  manualMode: boolean;
+};
+
+const PENDING_POST_DRAFT_KEY = "tokumikke_pending_post_draft_v1";
+const POST_LOGIN_RETURN_PARAM = "restorePostDraft";
 
 function normalizeText(value: string) {
   return value.toLowerCase().replace(/\s+/g, "");
@@ -189,12 +210,52 @@ function getRakutenRouteIdentifiers(value: string) {
   }
 }
 
+function normalizeAmazonProductUrl(value: string) {
+  try {
+    const url = new URL(value.trim());
+    const hostname = url.hostname.toLowerCase();
+    if (hostname !== "amazon.co.jp" && hostname !== "www.amazon.co.jp") return "";
+    const match = url.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+    const asin = match?.[1]?.toUpperCase() ?? "";
+    return asin ? `https://www.amazon.co.jp/dp/${asin}/` : "";
+  } catch { return ""; }
+}
+
+function isAmazonAffiliateOrRedirectUrl(value: string) {
+  try {
+    const url = new URL(value.trim());
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "amzn.to" || hostname.endsWith(".amzn.to")) return true;
+    return (hostname === "amazon.co.jp" || hostname === "www.amazon.co.jp") && url.searchParams.has("tag");
+  } catch { return false; }
+}
+
+function isDirectAmazonProductUrl(value: string) {
+  return isValidHttpUrl(value) && !isAmazonAffiliateOrRedirectUrl(value) && Boolean(normalizeAmazonProductUrl(value));
+}
+
+function getAmazonRouteIdentifiers(value: string) {
+  const normalizedUrl = normalizeAmazonProductUrl(value);
+  const match = normalizedUrl.match(/\/dp\/([A-Z0-9]{10})\/?$/i);
+  const asin = match?.[1]?.toUpperCase() ?? "";
+  if (!asin) return null;
+  return { marketCode: "am" as const, shopId: "amazon", itemId: asin };
+}
+
+function buildAmazonAffiliateUrl(asin: string) {
+  return `https://www.amazon.co.jp/dp/${asin}/ref=nosim?tag=swingbird-22`;
+}
+
+function recoverDirectAmazonUrl(value: string | null | undefined) {
+  return value ? normalizeAmazonProductUrl(value) : "";
+}
+
 function normalizeDealSlugPart(value: string | null | undefined) {
   return (value ?? "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9._\\\~-]+/g, "-")
+    .replace(/[^a-z0-9._~-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
@@ -248,14 +309,132 @@ function recoverDirectRakutenUrl(value: string | null | undefined) {
 
 function inferCategoryFromRakuten(params: {
   title?: string | null;
+  itemDescription?: string | null;
   shopName?: string | null;
   url?: string | null;
 }): DealCategory {
   const merged = normalizeText(
-    `${params.title ?? ""} ${params.shopName ?? ""} ${params.url ?? ""}`
+    `${params.title ?? ""} ${params.itemDescription ?? ""} ${params.shopName ?? ""} ${params.url ?? ""}`
   );
 
   const hasAny = (words: string[]) => words.some((w) => merged.includes(w));
+
+  if (
+    hasAny([
+      "食品",
+      "グルメ",
+      "鮭",
+      "さけ",
+      "サケ",
+      "銀鮭",
+      "魚",
+      "骨取り魚",
+      "海鮮",
+      "刺身",
+      "干物",
+      "魚介",
+      "seafood",
+      "肉",
+      "牛肉",
+      "豚肉",
+      "鶏肉",
+      "ハンバーグ",
+      "惣菜",
+      "冷凍食品",
+      "レトルト",
+      "カレー",
+      "ラーメン",
+      "うどん",
+      "そば",
+      "パスタ",
+      "パン",
+      "米",
+      "お米",
+      "玄米",
+      "無洗米",
+      "野菜",
+      "果物",
+      "フルーツ",
+      "スイーツ",
+      "お菓子",
+      "菓子",
+      "チョコ",
+      "クッキー",
+      "アイス",
+      "ケーキ",
+      "飲料",
+      "ドリンク",
+      "ジュース",
+      "コーヒー",
+      "紅茶",
+      "お茶",
+    ])
+  ) {
+    return "food";
+  }
+
+  if (
+    hasAny([
+      "スニーカー",
+      "シューズ",
+      "靴",
+      "パンプス",
+      "サンダル",
+      "ブーツ",
+      "ローファー",
+      "革靴",
+      "ランニングシューズ",
+      "スリッポン",
+      "shoes",
+      "sneaker",
+    ])
+  ) {
+    return "shoes";
+  }
+
+  if (
+    hasAny([
+      "スポーツ",
+      "フィットネス",
+      "トレーニング",
+      "ランニング",
+      "ゴルフ",
+      "テニス",
+      "サッカー",
+      "野球",
+      "バスケット",
+      "アウトドア",
+      "キャンプ",
+      "ヨガ",
+      "sports",
+      "fitness",
+    ])
+  ) {
+    return "sports";
+  }
+
+  if (
+    hasAny([
+      "インテリア",
+      "家具",
+      "ソファ",
+      "テーブル",
+      "デスク",
+      "チェア",
+      "椅子",
+      "ベッド",
+      "棚",
+      "ラック",
+      "カーテン",
+      "ラグ",
+      "カーペット",
+      "照明",
+      "interior",
+      "furniture",
+    ])
+  ) {
+    return "interior";
+  }
 
   if (
     hasAny([
@@ -341,16 +520,11 @@ function inferCategoryFromRakuten(params: {
       "布団",
       "枕",
       "クッション",
-      "インテリア",
-      "照明",
       "ライト",
       "洗剤",
       "掃除",
       "日用品",
       "home",
-      "家具",
-      "ラグ",
-      "カーテン",
       "ハンガー",
       "ボックス",
       "水筒",
@@ -424,7 +598,7 @@ function PostPageContent() {
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState<string>("");
   const [origPrice, setOrigPrice] = useState<string>("");
-  const [market] = useState<Market>("楽天市場");
+  const [market, setMarket] = useState<Market>("楽天市場");
   const [shopName, setShopName] = useState("");
   const [dealUrl, setDealUrl] = useState("");
   const [imageUrl, setImageUrl] = useState("");
@@ -438,14 +612,276 @@ function PostPageContent() {
 
   const [apiError, setApiError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRakutenAutoFilling, setIsRakutenAutoFilling] = useState(false);
   const [showValidationErrors, setShowValidationErrors] = useState(false);
 
   const [manualMode, setManualMode] = useState(false);
   const [isEditLoading, setIsEditLoading] = useState(false);
   const [originalDealUrl, setOriginalDealUrl] = useState("");
+  const [showLoginSuccessToast, setShowLoginSuccessToast] = useState(false);
 
   const initialEditSnapshotRef = useRef("");
   const allowEditNavigationRef = useRef(false);
+  const allowPostNavigationRef = useRef(false);
+
+  useEffect(() => {
+    if (isEditMode) return;
+
+    const shouldRestoreAfterLogin =
+      searchParams.get(POST_LOGIN_RETURN_PARAM) === "1";
+
+    if (!shouldRestoreAfterLogin) {
+      clearPendingPostDraft();
+      return;
+    }
+
+    setShowLoginSuccessToast(true);
+
+    try {
+      const rawDraft = window.sessionStorage.getItem(PENDING_POST_DRAFT_KEY);
+      if (!rawDraft) return;
+
+      const draft = JSON.parse(rawDraft) as Partial<PendingPostDraft>;
+
+      setProductUrl(typeof draft.productUrl === "string" ? draft.productUrl : "");
+      setTitle(typeof draft.title === "string" ? draft.title : "");
+      setPrice(typeof draft.price === "string" ? draft.price : "");
+      setOrigPrice(typeof draft.origPrice === "string" ? draft.origPrice : "");
+      setMarket(
+        draft.market === "楽天市場" ||
+          draft.market === "Amazon" ||
+          draft.market === "Yahoo!ショッピング" ||
+          draft.market === "ZOZOTOWN" ||
+          draft.market === ""
+          ? draft.market
+          : "楽天市場"
+      );
+      setShopName(typeof draft.shopName === "string" ? draft.shopName : "");
+
+      const restoredProductUrl =
+        typeof draft.productUrl === "string" ? draft.productUrl : "";
+      const restoredDealUrl =
+        typeof draft.dealUrl === "string" ? draft.dealUrl : "";
+
+      setDealUrl(restoredDealUrl);
+
+      if (
+        restoredProductUrl &&
+        isDirectRakutenProductUrl(restoredProductUrl) &&
+        !isRakutenAffiliateOrRedirectUrl(restoredDealUrl)
+      ) {
+        void requestRakutenAffiliateUrl(restoredProductUrl).then((result) => {
+          if (!result.affiliateUrl) {
+            console.error(
+              "[post] failed to repair restored Rakuten affiliate URL:",
+              result.error
+            );
+            return;
+          }
+
+          setDealUrl(result.affiliateUrl);
+        });
+      }
+
+      setImageUrl(typeof draft.imageUrl === "string" ? draft.imageUrl : "");
+      setComment(typeof draft.comment === "string" ? draft.comment : "");
+      setItemDescription(
+        typeof draft.itemDescription === "string" ? draft.itemDescription : ""
+      );
+      setCategory(
+        draft.category === "fashion_women" ||
+          draft.category === "fashion_men" ||
+          draft.category === "food" ||
+          draft.category === "beauty" ||
+          draft.category === "home" ||
+          draft.category === "interior" ||
+          draft.category === "electronics" ||
+          draft.category === "sports" ||
+          draft.category === "shoes" ||
+          draft.category === "other" ||
+          draft.category === ""
+          ? draft.category
+          : ""
+      );
+      setBrand(typeof draft.brand === "string" ? draft.brand : "");
+      setFreeShipping(draft.freeShipping === true);
+      setExpiresAt(typeof draft.expiresAt === "string" ? draft.expiresAt : "");
+      setManualMode(draft.manualMode === true);
+    } catch (err) {
+      console.error("[post] failed to restore pending draft:", err);
+    } finally {
+      // ログイン復帰で一度だけ使う。別ページから戻っても復元しない。
+      clearPendingPostDraft();
+
+      const url = new URL(window.location.href);
+      url.searchParams.delete(POST_LOGIN_RETURN_PARAM);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${url.pathname}${url.search}${url.hash}`
+      );
+    }
+  }, [isEditMode, searchParams]);
+
+  useEffect(() => {
+    if (!showLoginSuccessToast) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setShowLoginSuccessToast(false);
+    }, 3000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [showLoginSuccessToast]);
+
+  function savePendingPostDraft() {
+    if (isEditMode || typeof window === "undefined") return;
+
+    const draft: PendingPostDraft = {
+      productUrl,
+      title,
+      price,
+      origPrice,
+      market,
+      shopName,
+      dealUrl,
+      imageUrl,
+      comment,
+      itemDescription,
+      category,
+      brand,
+      freeShipping,
+      expiresAt,
+      manualMode,
+    };
+
+    try {
+      window.sessionStorage.setItem(
+        PENDING_POST_DRAFT_KEY,
+        JSON.stringify(draft)
+      );
+    } catch (err) {
+      console.error("[post] failed to save pending draft:", err);
+    }
+  }
+
+  function clearPendingPostDraft() {
+    if (typeof window === "undefined") return;
+
+    try {
+      window.sessionStorage.removeItem(PENDING_POST_DRAFT_KEY);
+    } catch (err) {
+      console.error("[post] failed to clear pending draft:", err);
+    }
+  }
+
+  function clearPostForm() {
+    setProductUrl("");
+    setTitle("");
+    setPrice("");
+    setOrigPrice("");
+    setMarket("楽天市場");
+    setShopName("");
+    setDealUrl("");
+    setImageUrl("");
+    setComment("");
+    setItemDescription("");
+    setCategory("");
+    setBrand("");
+    setFreeShipping(false);
+    setExpiresAt("");
+    setManualMode(false);
+    setApiError(null);
+    setShowValidationErrors(false);
+    clearPendingPostDraft();
+  }
+
+  const hasPostFormContent =
+    !isEditMode &&
+    Boolean(
+      productUrl.trim() ||
+        title.trim() ||
+        price.trim() ||
+        origPrice.trim() ||
+        shopName.trim() ||
+        dealUrl.trim() ||
+        imageUrl.trim() ||
+        comment.trim() ||
+        itemDescription.trim() ||
+        category ||
+        brand.trim() ||
+        freeShipping ||
+        expiresAt.trim()
+    );
+
+  function confirmAndClearPostForm() {
+    if (!hasPostFormContent) {
+      clearPostForm();
+      return true;
+    }
+
+    const confirmed = window.confirm(
+      "入力内容をすべてクリアします。よろしいですか？"
+    );
+
+    if (!confirmed) return false;
+
+    clearPostForm();
+    return true;
+  }
+
+  async function requestRakutenAffiliateUrl(
+    directProductUrl: string
+  ): Promise<{ affiliateUrl: string | null; error: string | null }> {
+    try {
+      const res = await fetch("/api/rakuten-affiliate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: directProductUrl }),
+      });
+
+      const text = await res.text();
+
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
+
+      if (!res.ok) {
+        const message =
+          typeof data?.error === "string" && data.error.trim()
+            ? data.error.trim()
+            : "アフィリエイトURLの生成に失敗しました。";
+
+        return { affiliateUrl: null, error: message };
+      }
+
+      const affiliateUrl =
+        typeof data?.affiliateUrl === "string"
+          ? data.affiliateUrl.trim()
+          : "";
+
+      if (!affiliateUrl) {
+        return {
+          affiliateUrl: null,
+          error:
+            "アフィリエイトURLの生成に失敗しました。アフィリエイト設定をご確認ください。",
+        };
+      }
+
+      return { affiliateUrl, error: null };
+    } catch (err) {
+      console.error("[post] rakuten-affiliate request failed:", err);
+      return {
+        affiliateUrl: null,
+        error:
+          "アフィリエイトURLの生成中に予期せぬエラーが発生しました。時間をおいて再度お試しください。",
+      };
+    }
+  }
 
   useEffect(() => {
     if (!editId) return;
@@ -497,9 +933,13 @@ function PostPageContent() {
 
         const loadedSourceUrl =
           recoverDirectRakutenUrl(data.source_url) ||
-          recoverDirectRakutenUrl(data.deal_url);
+          recoverDirectRakutenUrl(data.deal_url) ||
+          recoverDirectAmazonUrl(data.source_url) ||
+          recoverDirectAmazonUrl(data.deal_url);
+        const loadedMarket: Market = data.market === "Amazon" || normalizeAmazonProductUrl(loadedSourceUrl) ? "Amazon" : "楽天市場";
 
         setProductUrl(loadedSourceUrl);
+        setMarket(loadedMarket);
         setOriginalDealUrl(loadedSourceUrl);
         setTitle(data.title ?? "");
         setPrice(data.price != null ? String(data.price) : "");
@@ -605,6 +1045,109 @@ function PostPageContent() {
     expiresAt,
   ]);
 
+  useEffect(() => {
+    if (isEditMode || !hasPostFormContent) return;
+
+    const confirmLeave = () =>
+      window.confirm(
+        "このページから移動すると入力内容がリセットされます。よろしいですか？"
+      );
+
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (allowPostNavigationRef.current) return;
+
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+
+      const anchor = target.closest("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const href = anchor.getAttribute("href");
+      if (!href || href.startsWith("#") || href.startsWith("javascript:")) {
+        return;
+      }
+
+      let destination: URL;
+      try {
+        destination = new URL(anchor.href, window.location.href);
+      } catch {
+        return;
+      }
+
+      const current = new URL(window.location.href);
+      if (
+        destination.pathname === current.pathname &&
+        destination.search === current.search &&
+        destination.hash === current.hash
+      ) {
+        return;
+      }
+
+      // 投稿→ログイン→投稿画面の復帰だけは入力内容を残す。
+      if (
+        destination.origin === current.origin &&
+        destination.pathname === "/auth" &&
+        destination.searchParams
+          .get("next")
+          ?.includes(`${POST_LOGIN_RETURN_PARAM}=1`)
+      ) {
+        allowPostNavigationRef.current = true;
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (!confirmLeave()) return;
+
+      allowPostNavigationRef.current = true;
+      clearPostForm();
+      window.location.assign(destination.href);
+    };
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (allowPostNavigationRef.current) return;
+
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    document.addEventListener("click", handleDocumentClick, true);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      document.removeEventListener("click", handleDocumentClick, true);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [
+    isEditMode,
+    hasPostFormContent,
+    productUrl,
+    title,
+    price,
+    origPrice,
+    shopName,
+    dealUrl,
+    imageUrl,
+    comment,
+    itemDescription,
+    category,
+    brand,
+    freeShipping,
+    expiresAt,
+  ]);
+
   async function handleRakutenAutoFill() {
     setApiError(null);
 
@@ -621,7 +1164,7 @@ function PostPageContent() {
     }
 
     try {
-      setIsLoading(true);
+      setIsRakutenAutoFilling(true);
       setManualMode(false);
       setProductUrl(normalizedProductUrl);
 
@@ -711,12 +1254,27 @@ function PostPageContent() {
 
       const nextTitle = data.title ?? "";
       const nextShopName = data.shopName ?? "";
-      const nextDealUrl = data.dealUrl ?? data.itemUrl ?? productUrl;
       const nextImageUrl = data.imageUrl ?? "";
+
+      const affiliateResult =
+        await requestRakutenAffiliateUrl(normalizedProductUrl);
+
+      if (!affiliateResult.affiliateUrl) {
+        setApiError(
+          affiliateResult.error ??
+            "アフィリエイトURLの生成に失敗しました。"
+        );
+        setManualMode(true);
+        return;
+      }
+
+      const nextDealUrl = affiliateResult.affiliateUrl;
       const inferredCategory = inferCategoryFromRakuten({
         title: nextTitle,
+        itemDescription:
+          typeof data.itemDescription === "string" ? data.itemDescription : "",
         shopName: nextShopName,
-        url: productUrl,
+        url: normalizedProductUrl,
       });
 
       setTitle(nextTitle);
@@ -749,7 +1307,11 @@ function PostPageContent() {
           );
         } else {
           console.warn("[post] unsupported Rakuten endTime format:", rakutenEndTime);
+          setExpiresAt("");
         }
+      } else {
+        // 新しい自動入力結果に有効期限が無い場合、前回値を残さない。
+        setExpiresAt("");
       }
 
       if (typeof data.freeShipping === "boolean") {
@@ -768,9 +1330,10 @@ function PostPageContent() {
         setManualMode(true);
       }
     } finally {
-      setIsLoading(false);
+      setIsRakutenAutoFilling(false);
     }
   }
+
 
   function clearValidationErrorIfNeeded() {
     if (!showValidationErrors) return;
@@ -778,8 +1341,9 @@ function PostPageContent() {
     if (
       apiError === "商品ページのURLは必須です。" ||
       apiError === "商品ページのURLの形式が正しくありません。" ||
-      apiError === "アフィリエイトURLや短縮URLは使用できません。楽天の元の商品ページURLを入力してください。" ||
+      apiError === "アフィリエイトURLや短縮URLは使用できません。楽天またはAmazon.co.jpの元の商品ページURLを入力してください。" ||
       apiError === "楽天の商品ページURLを入力してください。" ||
+      apiError === "Amazon.co.jpの元の商品ページURLを入力してください。" ||
       apiError === "タイトルは必須です。" ||
       apiError === "価格は必須です。0より大きい金額を入力してください。" ||
       apiError === "コメントは必須です。" ||
@@ -826,14 +1390,14 @@ function PostPageContent() {
       focusInvalidField("deal-product-url");
       return;
     }
-    if (isRakutenAffiliateOrRedirectUrl(productUrl)) {
+    if (isRakutenAffiliateOrRedirectUrl(productUrl) || isAmazonAffiliateOrRedirectUrl(productUrl)) {
       setApiError(
         "アフィリエイトURLや短縮URLは使用できません。楽天の元の商品ページURLを入力してください。"
       );
       focusInvalidField("deal-product-url");
       return;
     }
-    if (!isDirectRakutenProductUrl(productUrl)) {
+    if (!isDirectRakutenProductUrl(productUrl) && !isDirectAmazonProductUrl(productUrl)) {
       setApiError("楽天の商品ページURLを入力してください。");
       focusInvalidField("deal-product-url");
       return;
@@ -873,16 +1437,17 @@ function PostPageContent() {
       } = await supabase.auth.getUser();
 
       if (userError || !user) {
+        savePendingPostDraft();
         setApiError("投稿するにはログインが必要です。");
         return;
       }
 
-      const trimmedProductUrl =
-        normalizeRakutenProductUrl(productUrl) || productUrl.trim();
-      const routeIdentifiers = getRakutenRouteIdentifiers(trimmedProductUrl);
+      const isAmazonDeal = isDirectAmazonProductUrl(productUrl);
+      const trimmedProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(productUrl) : normalizeRakutenProductUrl(productUrl) || productUrl.trim();
+      const routeIdentifiers = isAmazonDeal ? getAmazonRouteIdentifiers(trimmedProductUrl) : getRakutenRouteIdentifiers(trimmedProductUrl);
 
       if (!routeIdentifiers) {
-        setApiError("楽天の商品識別情報を取得できませんでした。商品ページURLをご確認ください。");
+        setApiError("商品識別情報を取得できませんでした。商品ページURLをご確認ください。");
         focusInvalidField("deal-product-url");
         return;
       }
@@ -916,19 +1481,14 @@ function PostPageContent() {
           return;
         }
 
-        const normalizedCurrentProductUrl =
-          normalizeRakutenProductUrl(trimmedProductUrl);
+        const normalizedCurrentProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(trimmedProductUrl) : normalizeRakutenProductUrl(trimmedProductUrl);
 
         const duplicateDeal = (sameExpiryDeals ?? []).find((deal) => {
-          const existingProductUrl =
-            recoverDirectRakutenUrl(deal.source_url) ||
-            recoverDirectRakutenUrl(deal.deal_url);
-
-          return (
-            existingProductUrl &&
-            normalizeRakutenProductUrl(existingProductUrl) ===
-              normalizedCurrentProductUrl
-          );
+          const existingProductUrl = isAmazonDeal
+            ? recoverDirectAmazonUrl(deal.source_url) || recoverDirectAmazonUrl(deal.deal_url)
+            : recoverDirectRakutenUrl(deal.source_url) || recoverDirectRakutenUrl(deal.deal_url);
+          const normalizedExistingProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(existingProductUrl) : normalizeRakutenProductUrl(existingProductUrl);
+          return existingProductUrl && normalizedExistingProductUrl === normalizedCurrentProductUrl;
         });
 
         if (duplicateDeal) {
@@ -961,12 +1521,12 @@ function PostPageContent() {
         nextDealNumber = (latestSameProductDeal?.deal_number ?? 0) + 1;
       }
 
-      let finalDealUrl = trimmedProductUrl;
+      let finalDealUrl = isAmazonDeal ? buildAmazonAffiliateUrl(routeIdentifiers.itemId) : trimmedProductUrl;
 
       // 新規投稿・編集を問わず、保存時には必ず トクミッケ の
       // 楽天アフィリエイトURLを再生成する。
       // これにより、過去データで deal_url が通常の商品URLだった場合も修正される。
-      const shouldCreateRakutenAffiliateUrl = true;
+      const shouldCreateRakutenAffiliateUrl = !isAmazonDeal;
 
       if (shouldCreateRakutenAffiliateUrl) {
         try {
@@ -1016,7 +1576,7 @@ function PostPageContent() {
         title,
         price: price ? Number(price) : null,
         orig_price: origPrice ? Number(origPrice) : null,
-        market: market || null,
+        market: isAmazonDeal ? "Amazon" : market || null,
         market_code: routeIdentifiers.marketCode,
         shop_id: routeIdentifiers.shopId,
         item_id: routeIdentifiers.itemId,
@@ -1105,6 +1665,10 @@ function PostPageContent() {
         return;
       }
 
+      if (!isEditMode) {
+        clearPendingPostDraft();
+      }
+
       router.push(
         buildDealDetailPath({
           publicId: createdDeal.public_id,
@@ -1126,6 +1690,39 @@ function PostPageContent() {
 
   return (
     <div className="min-h-screen bg-[#f7f8fa]">
+      {showLoginSuccessToast ? (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="fixed left-1/2 top-4 z-[100] -translate-x-1/2 rounded-md bg-[#001e43] px-4 py-3 text-sm font-semibold text-white shadow-lg"
+        >
+          ログインしました。
+        </div>
+      ) : null}
+
+      {isRakutenAutoFilling ? (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/35 px-4"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="w-full max-w-sm rounded-xl bg-white px-6 py-6 text-center shadow-2xl ring-1 ring-slate-200">
+            <div
+              className="mx-auto h-9 w-9 animate-spin rounded-full border-4 border-slate-200 border-t-[#001e43]"
+              aria-hidden="true"
+            />
+            <p className="mt-4 text-base font-semibold text-[#001e43]">
+              楽天から商品情報を取得しています...
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              商品によっては数秒〜十数秒かかる場合があります。
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       <main className="mx-auto max-w-3xl px-0 py-0 sm:px-4 sm:py-8">
         <h1 className="hidden sm:mb-4 sm:block sm:text-2xl sm:font-bold sm:text-[#001e43]">
           {isEditMode ? "ディールを編集する" : "ディールを投稿する"}
@@ -1134,6 +1731,17 @@ function PostPageContent() {
         {apiError && (
           <div className="mx-4 mt-4 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 sm:mx-0 sm:mt-0 sm:mb-4">
             {apiError}
+            {apiError === "投稿するにはログインが必要です。" ? (
+              <>
+                {" "}
+                <a
+                  href="/auth?next=%2Fpost%3FrestorePostDraft%3D1"
+                  className="cursor-pointer font-semibold text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                >
+                  ログイン・新規登録はこちら
+                </a>
+              </>
+            ) : null}
           </div>
         )}
 
@@ -1171,17 +1779,29 @@ function PostPageContent() {
                   showValidationErrors &&
                   (!productUrl.trim() ||
                     !isValidHttpUrl(productUrl) ||
-                    !isDirectRakutenProductUrl(productUrl))
+                    (!isDirectRakutenProductUrl(productUrl) && !isDirectAmazonProductUrl(productUrl)))
                     ? "border-red-500 bg-red-50/30"
                     : "border-slate-300"
                 } focus:border-[#001e43] focus:outline-none focus:ring-1 focus:ring-[#001e43] sm:h-auto sm:flex-1 sm:rounded sm:py-2 sm:text-sm`}
-                placeholder="https://item.rakuten.co.jp/ショップ名/商品コード/"
+                placeholder="楽天の商品ページURL"
                 value={productUrl}
                 readOnly={isEditMode}
                 onChange={(e) => {
                   const nextUrl = e.target.value;
                   setProductUrl(nextUrl);
-                                clearValidationErrorIfNeeded();
+                  if (!isEditMode) {
+                    if (isDirectAmazonProductUrl(nextUrl)) {
+                      const normalizedAmazonUrl = normalizeAmazonProductUrl(nextUrl);
+                      const amazonIdentifiers = getAmazonRouteIdentifiers(normalizedAmazonUrl);
+                      setMarket("Amazon");
+                      setManualMode(true);
+                      setShopName("Amazon.co.jp");
+                      setDealUrl(amazonIdentifiers ? buildAmazonAffiliateUrl(amazonIdentifiers.itemId) : "");
+                    } else {
+                      setMarket("楽天市場");
+                    }
+                  }
+                  clearValidationErrorIfNeeded();
 
                   if (isEditMode && nextUrl.trim() !== originalDealUrl.trim()) {
                     setDealUrl("");
@@ -1192,10 +1812,16 @@ function PostPageContent() {
               <button
                 type="button"
                 onClick={handleRakutenAutoFill}
-                disabled={isEditMode || isLoading || isEditLoading}
+                disabled={
+                  isEditMode ||
+                  isLoading ||
+                  isEditLoading ||
+                  isRakutenAutoFilling ||
+                  isDirectAmazonProductUrl(productUrl)
+                }
                 className="h-11 w-full cursor-pointer rounded-md bg-[#001e43] px-4 text-sm font-semibold text-white hover:bg-[#002b66] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 disabled:opacity-100 sm:h-auto sm:w-auto sm:whitespace-nowrap sm:rounded sm:px-3 sm:py-2 sm:text-xs"
               >
-                楽天から自動入力
+                {isRakutenAutoFilling ? "取得中..." : "楽天から自動入力"}
               </button>
             </div>
 
@@ -1208,21 +1834,27 @@ function PostPageContent() {
                 http:// または https:// から始まる正しいURLを入力してください。
               </p>
             ) : showValidationErrors &&
-              isRakutenAffiliateOrRedirectUrl(productUrl) ? (
+              (isRakutenAffiliateOrRedirectUrl(productUrl) || isAmazonAffiliateOrRedirectUrl(productUrl)) ? (
               <p className="mt-1 text-xs font-medium text-red-600">
-                アフィリエイトURLや短縮URLではなく、楽天の元の商品ページURLを入力してください。
+                アフィリエイトURLや短縮URLではなく、元の商品ページURLを入力してください。
               </p>
             ) : showValidationErrors &&
-              !isDirectRakutenProductUrl(productUrl) ? (
+              !isDirectRakutenProductUrl(productUrl) && !isDirectAmazonProductUrl(productUrl) ? (
               <p className="mt-1 text-xs font-medium text-red-600">
                 楽天の商品ページURLを入力してください。
               </p>
             ) : null}
 
+            {!isEditMode && (
+              <p className="mt-1.5 text-xs leading-5 text-slate-500">
+                現在は楽天市場の商品に対応しています。Amazon・Yahoo!ショッピングにも順次対応予定です。
+              </p>
+            )}
+
             <p className="mt-1.5 hidden text-xs leading-5 text-slate-600 sm:block">
               {isEditMode
                 ? "登録済みの商品ページURLは変更できません。更新時にはトクミッケのアフィリエイトURLを再生成します。"
-                : "楽天の商品ページURLをそのまま貼り付けてください。末尾に ?eid= などのパラメータが付いていても使用できます。トクミッケ側で正規の商品URLに整えます。アフィリエイトURLや短縮URLは使用できません。"}
+                : "楽天の商品ページURLを貼り付けてください。アフィリエイトURLや短縮URLは使用できません。"}
             </p>
           </div>
 
@@ -1539,14 +2171,16 @@ function PostPageContent() {
             <input
               type="url"
               className={`mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 ${placeholderClass} ${readOnlyBg}`}
-              placeholder="楽天APIから生成されたリンクが自動で入ります。編集はできません。"
+              placeholder="投稿時にアフィリエイトリンクが自動生成されます。"
               value={dealUrl}
               disabled
             />
             <p className="mt-1 text-xs text-slate-600">
               {isEditMode
                 ? "現在保存されているトクミッケのアフィリエイトリンクです。更新時に再生成されます。"
-                : "投稿時に、楽天アフィリエイトAPIでトクミッケのアフィリエイトURLへ自動変換されます。"}
+                : market === "Amazon"
+                  ? "投稿時にアフィリエイトリンクへ自動変換されます。"
+                  : "楽天から自動入力した時点でトクミッケのアフィリエイトURLを生成し、投稿時にも再生成して保存します。"}
             </p>
           </div>
 
@@ -1556,10 +2190,13 @@ function PostPageContent() {
             </label>
             <input
               type="url"
-              className={`mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 ${placeholderClass} ${readOnlyBg}`}
-              placeholder="楽天APIから自動で入ります。編集はできません。"
+              className={`mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm text-slate-900 ${placeholderClass} ${market === "Amazon" ? "bg-white" : readOnlyBg}`}
+              placeholder={market === "Amazon" ? "商品画像URLを入力してください。" : "楽天APIから自動で入ります。編集はできません。"}
               value={imageUrl}
-              disabled
+              onChange={(e) => {
+                if (market === "Amazon") setImageUrl(e.target.value);
+              }}
+              disabled={market !== "Amazon"}
             />
           </div>
 
@@ -1577,16 +2214,27 @@ function PostPageContent() {
                     router.push("/mypage?tab=deals");
                   }
                 }}
-                disabled={isLoading || isEditLoading}
+                disabled={isLoading || isEditLoading || isRakutenAutoFilling}
                 className="mb-2 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white px-5 text-[15px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:mb-0 sm:mr-2 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm"
               >
                 キャンセル
               </button>
             ) : null}
 
+            {!isEditMode ? (
+              <button
+                type="button"
+                onClick={confirmAndClearPostForm}
+                disabled={isLoading || isEditLoading || isRakutenAutoFilling || !hasPostFormContent}
+                className="mb-2 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white px-5 text-[15px] font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 sm:mb-0 sm:mr-2 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm"
+              >
+                入力内容をクリア
+              </button>
+            ) : null}
+
             <button
               type="submit"
-              disabled={isLoading || isEditLoading}
+              disabled={isLoading || isEditLoading || isRakutenAutoFilling}
               className="inline-flex h-12 w-full items-center justify-center rounded-md bg-[#001e43] px-5 text-[15px] font-semibold text-white hover:bg-[#002b66] cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm"
             >
               {isLoading

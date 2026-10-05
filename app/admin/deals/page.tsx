@@ -354,7 +354,9 @@ export default function AdminDealsPage() {
 
       operationError = result.error;
     } else {
-      const result = await supabase.from("deals").delete().in("id", ids);
+      const result = await supabase.rpc("admin_delete_deals", {
+        p_deal_ids: ids,
+      });
       operationError = result.error;
     }
 

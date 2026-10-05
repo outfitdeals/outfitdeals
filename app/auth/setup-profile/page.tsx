@@ -8,6 +8,18 @@ import { supabase } from "@/lib/supabaseClient";
 
 const CONSENT_KEY = "tokumikke_oauth_signup_consent";
 
+function getSafeReturnTo() {
+  if (typeof window === "undefined") return "/mypage";
+
+  const raw = new URLSearchParams(window.location.search).get("next");
+
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/auth")) {
+    return "/mypage";
+  }
+
+  return raw;
+}
+
 export default function SetupProfilePage() {
   const router = useRouter();
 
@@ -25,12 +37,13 @@ export default function SetupProfilePage() {
     let cancelled = false;
 
     const load = async () => {
+      const returnTo = getSafeReturnTo();
       const { data, error } = await supabase.auth.getUser();
 
       if (cancelled) return;
 
       if (error || !data.user) {
-        router.replace("/auth");
+        router.replace(`/auth?next=${encodeURIComponent(returnTo)}`);
         return;
       }
 
@@ -53,7 +66,7 @@ export default function SetupProfilePage() {
 
       if (profile?.username) {
         sessionStorage.removeItem(CONSENT_KEY);
-        router.replace("/mypage");
+        router.replace(returnTo);
         return;
       }
 
@@ -139,7 +152,7 @@ export default function SetupProfilePage() {
 
     sessionStorage.removeItem(CONSENT_KEY);
     localStorage.removeItem(CONSENT_KEY);
-    router.replace("/mypage");
+    router.replace(getSafeReturnTo());
     router.refresh();
   };
 

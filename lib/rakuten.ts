@@ -51,6 +51,7 @@ type ParsedRakutenUrl = {
   sourcePathSegments: string[];
 };
 type RakutenApiItem = {
+  itemCode?: string;
   itemName?: string;
   itemPrice?: number | string;
   itemUrl?: string;
@@ -369,6 +370,70 @@ async function searchRakutenItems(params: {
   );
   return items;
 }
+
+async function searchRakutenItemByCode(
+  shopCode: string,
+  itemId: string
+): Promise<RakutenApiItem | null> {
+  if (!RAKUTEN_APP_ID || !RAKUTEN_ACCESS_KEY) return null;
+
+  const itemCode = `${shopCode}:${itemId}`;
+  const apiUrl = new URL(
+    "https://openapi.rakuten.co.jp/ichibams/api/IchibaItem/Search/20260701"
+  );
+
+  apiUrl.searchParams.set("applicationId", RAKUTEN_APP_ID);
+  apiUrl.searchParams.set("accessKey", RAKUTEN_ACCESS_KEY);
+  apiUrl.searchParams.set("format", "json");
+  apiUrl.searchParams.set("formatVersion", "2");
+  apiUrl.searchParams.set("itemCode", itemCode);
+  apiUrl.searchParams.set("hits", "1");
+
+  if (RAKUTEN_AFFILIATE_ID) {
+    apiUrl.searchParams.set("affiliateId", RAKUTEN_AFFILIATE_ID);
+  }
+
+  let res: Response;
+
+  try {
+    res = await fetchWithTimeoutAndRetry(apiUrl.toString());
+  } catch (error) {
+    console.warn("[rakuten] exact itemCode request failed:", itemCode, error);
+    return null;
+  }
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    console.warn("[rakuten] exact itemCode unavailable:", {
+      itemCode,
+      status: res.status,
+      body: text.slice(0, 300),
+    });
+    return null;
+  }
+
+  try {
+    const json = JSON.parse(text);
+    const rawItems = Array.isArray(json.items)
+      ? json.items
+      : Array.isArray(json.Items)
+      ? json.Items
+      : [];
+
+    const first = rawItems[0];
+    if (!first) return null;
+
+    const item =
+      first?.Item && typeof first.Item === "object" ? first.Item : first;
+
+    return item as RakutenApiItem;
+  } catch (error) {
+    console.warn("[rakuten] exact itemCode JSON parse failed:", error);
+    return null;
+  }
+}
+
 function scoreRakutenItemMatch(
   item: RakutenApiItem,
   expectedShop: string,
@@ -461,12 +526,817 @@ function chooseBestRakutenItem(
  *  - affiliate URL の pc パラメータ内に入っている本来のURLを展開して比較する
  *  - fetch failed / ECONNRESET 対策としてリトライを入れる
  */
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16))
+    )
+    .replace(/&#(\d+);/g, (_m, dec: string) =>
+      String.fromCodePoint(Number.parseInt(dec, 10))
+    );
+}
+
+function stripHtml(value: string): string {
+  return decodeHtmlEntities(
+    value
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getHtmlAttribute(tag: string, name: string): string | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = tag.match(
+    new RegExp(
+      `${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+      "i"
+    )
+  );
+  const value = match?.[1] ?? match?.[2] ?? match?.[3];
+  return value ? decodeHtmlEntities(value).trim() : null;
+}
+
+function getMetaContent(
+  html: string,
+  attributeName: "property" | "name" | "itemprop",
+  attributeValue: string
+): string | null {
+  const tags = html.match(/<meta\b[^>]*>/gi) ?? [];
+
+  for (const tag of tags) {
+    const key = getHtmlAttribute(tag, attributeName);
+    if (key?.toLowerCase() !== attributeValue.toLowerCase()) continue;
+
+    const content = getHtmlAttribute(tag, "content");
+    if (content) return content;
+  }
+
+  return null;
+}
+
+function toPositivePrice(value: unknown): number | null {
+  const text = String(value ?? "")
+    .replace(/[￥¥円,，\s]/g, "")
+    .trim();
+  const match = text.match(/\d+(?:\.\d+)?/);
+  if (!match) return null;
+
+  const price = Number(match[0]);
+  return Number.isFinite(price) && price > 0 ? Math.round(price) : null;
+}
+
+function findJsonLdProduct(value: unknown): Record<string, any> | null {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findJsonLdProduct(entry);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (!value || typeof value !== "object") return null;
+
+  const objectValue = value as Record<string, any>;
+  const rawType = objectValue["@type"];
+  const types = Array.isArray(rawType) ? rawType : [rawType];
+
+  if (
+    types.some(
+      (type) =>
+        typeof type === "string" &&
+        (type.toLowerCase() === "product" ||
+          type.toLowerCase().endsWith("/product"))
+    )
+  ) {
+    return objectValue;
+  }
+
+  for (const key of ["@graph", "mainEntity", "itemListElement"]) {
+    if (key in objectValue) {
+      const found = findJsonLdProduct(objectValue[key]);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function getJsonLdProduct(html: string): Record<string, any> | null {
+  const scriptRegex =
+    /<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+
+  let match: RegExpExecArray | null;
+
+  while ((match = scriptRegex.exec(html)) !== null) {
+    const raw = decodeHtmlEntities(match[1])
+      .replace(/^\s*<!--/, "")
+      .replace(/-->\s*$/, "")
+      .trim();
+
+    if (!raw) continue;
+
+    try {
+      const parsed = JSON.parse(raw);
+      const product = findJsonLdProduct(parsed);
+      if (product) return product;
+    } catch {
+      // Some Rakuten pages contain non-standard JSON-LD blocks.
+    }
+  }
+
+  return null;
+}
+
+function getOfferPrice(offers: unknown): number | null {
+  const candidates = Array.isArray(offers) ? offers : [offers];
+
+  for (const offer of candidates) {
+    if (!offer || typeof offer !== "object") continue;
+    const objectOffer = offer as Record<string, unknown>;
+
+    for (const key of ["price", "lowPrice", "highPrice"]) {
+      const price = toPositivePrice(objectOffer[key]);
+      if (price !== null) return price;
+    }
+  }
+
+  return null;
+}
+
+function getSellerName(offers: unknown): string | null {
+  const candidates = Array.isArray(offers) ? offers : [offers];
+
+  for (const offer of candidates) {
+    if (!offer || typeof offer !== "object") continue;
+    const seller = (offer as Record<string, any>).seller;
+
+    if (typeof seller === "string" && seller.trim()) return seller.trim();
+
+    if (seller && typeof seller === "object") {
+      const name = String(seller.name ?? "").trim();
+      if (name) return name;
+    }
+  }
+
+  return null;
+}
+
+function getEmbeddedJsonString(html: string, key: string): string | null {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = html.match(
+    new RegExp(
+      `(?:"|')${escapedKey}(?:"|')\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`,
+      "i"
+    )
+  );
+
+  if (!match?.[1]) return null;
+
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch {
+    return decodeHtmlEntities(match[1]).trim() || null;
+  }
+}
+
+function getEmbeddedPrice(html: string): number | null {
+  for (const key of [
+    "itemPrice",
+    "sellingPrice",
+    "currentPrice",
+    "displayPrice",
+    "price",
+  ]) {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const quoted = html.match(
+      new RegExp(
+        `(?:"|')${escapedKey}(?:"|')\\s*:\\s*"([^"\\n]{1,40})"`,
+        "i"
+      )
+    );
+    const numeric = html.match(
+      new RegExp(
+        `(?:"|')${escapedKey}(?:"|')\\s*:\\s*(\\d{2,9})`,
+        "i"
+      )
+    );
+    const price = toPositivePrice(quoted?.[1] ?? numeric?.[1]);
+    if (price !== null) return price;
+  }
+
+  return null;
+}
+
+function parseRakutenPageTitle(html: string): {
+  title: string | null;
+  shopName: string | null;
+} {
+  const ogTitle = getMetaContent(html, "property", "og:title");
+  const titleTag = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+
+  let title = decodeHtmlEntities(ogTitle ?? stripHtml(titleTag ?? ""))
+    .replace(/^【楽天市場】\s*/, "")
+    .trim();
+
+  let shopName: string | null = null;
+  const separatorIndex = title.lastIndexOf("：");
+
+  if (separatorIndex > 0 && separatorIndex < title.length - 1) {
+    shopName = title.slice(separatorIndex + 1).trim() || null;
+    title = title.slice(0, separatorIndex).trim();
+  }
+
+  return { title: title || null, shopName };
+}
+
+
+
+function decodeEmbeddedJsonValue(raw: string): string | null {
+  try {
+    return JSON.parse(`"${raw}"`);
+  } catch {
+    return decodeHtmlEntities(raw)
+      .replace(/\\u002F/gi, "/")
+      .replace(/\\\//g, "/")
+      .trim() || null;
+  }
+}
+
+function parseRakutenJstDateTime(value: string): number | null {
+  const match = String(value ?? "").match(
+    /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/
+  );
+
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second = "00"] = match;
+  const timestamp = Date.parse(
+    `${year}-${month.padStart(2, "0")}-${day.padStart(
+      2,
+      "0"
+    )}T${hour.padStart(2, "0")}:${minute}:${second}+09:00`
+  );
+
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function formatRakutenJstMinute(value: string): string | null {
+  const match = String(value ?? "").match(
+    /^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::\d{2})?$/
+  );
+
+  if (!match) return null;
+
+  return `${match[1]}/${match[2].padStart(2, "0")}/${match[3].padStart(
+    2,
+    "0"
+  )} ${match[4].padStart(2, "0")}:${match[5]}`;
+}
+
+function getRakutenPageTimeSaleEndTime(html: string): string | null {
+  type SalePeriod = {
+    startMs: number;
+    endMs: number;
+    endText: string;
+  };
+
+  const periods: SalePeriod[] = [];
+
+  // 楽天商品ページ内の初期状態:
+  // "timeSale": {
+  //   "startDateTime": "2026\\u002F10\\u002F04 12:00:00",
+  //   "endDateTime":   "2026\\u002F10\\u002F11 11:59:59"
+  // }
+  const dateTimePattern =
+    /"timeSale"\s*:\s*\{[\s\S]{0,1200}?"startDateTime"\s*:\s*"((?:\\.|[^"\\])*)"[\s\S]{0,600}?"endDateTime"\s*:\s*"((?:\\.|[^"\\])*)"/gi;
+
+  for (const match of html.matchAll(dateTimePattern)) {
+    const startText = decodeEmbeddedJsonValue(match[1]);
+    const endTextRaw = decodeEmbeddedJsonValue(match[2]);
+
+    if (!startText || !endTextRaw) continue;
+
+    const startMs = parseRakutenJstDateTime(startText);
+    const endMs = parseRakutenJstDateTime(endTextRaw);
+    const endText = formatRakutenJstMinute(endTextRaw);
+
+    if (
+      startMs === null ||
+      endMs === null ||
+      endMs < startMs ||
+      !endText
+    ) {
+      continue;
+    }
+
+    periods.push({ startMs, endMs, endText });
+  }
+
+  // 同じページにはepoch milliseconds版のtimeSale状態も入る。
+  const epochPattern =
+    /"timeSale"\s*:\s*\{[\s\S]{0,1200}?"startTime"\s*:\s*(\d{13})[\s\S]{0,400}?"endTime"\s*:\s*(\d{13})/gi;
+
+  for (const match of html.matchAll(epochPattern)) {
+    const startMs = Number(match[1]);
+    const endMs = Number(match[2]);
+
+    if (
+      !Number.isFinite(startMs) ||
+      !Number.isFinite(endMs) ||
+      endMs < startMs
+    ) {
+      continue;
+    }
+
+    const end = new Date(endMs + 9 * 60 * 60 * 1000);
+    const endText =
+      `${end.getUTCFullYear()}/${String(end.getUTCMonth() + 1).padStart(
+        2,
+        "0"
+      )}/${String(end.getUTCDate()).padStart(2, "0")} ` +
+      `${String(end.getUTCHours()).padStart(2, "0")}:${String(
+        end.getUTCMinutes()
+      ).padStart(2, "0")}`;
+
+    periods.push({ startMs, endMs, endText });
+  }
+
+  const unique = Array.from(
+    new Map(
+      periods.map((period) => [
+        `${period.startMs}:${period.endMs}`,
+        period,
+      ])
+    ).values()
+  );
+
+  const now = Date.now();
+
+  const active = unique
+    .filter((period) => period.startMs <= now && now <= period.endMs)
+    .sort((a, b) => a.endMs - b.endMs);
+
+  if (active.length > 0) {
+    return active[0].endText;
+  }
+
+  const upcoming = unique
+    .filter((period) => period.startMs > now)
+    .sort((a, b) => a.startMs - b.startMs);
+
+  return upcoming[0]?.endText ?? null;
+}
+
+
+function getRakutenVisibleSalePeriodEndTime(html: string): string | null {
+  type SalePeriod = {
+    startMs: number;
+    endMs: number;
+    endText: string;
+  };
+
+  const periods: SalePeriod[] = [];
+  const labelPattern = /販売期間/gi;
+
+  for (const labelMatch of html.matchAll(labelPattern)) {
+    const startIndex = labelMatch.index ?? 0;
+    const nearby = decodeHtmlEntities(
+      html.slice(startIndex, startIndex + 1800)
+    )
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+
+    const range = nearby.match(
+      /(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*[～〜~-]\s*(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})(?::\d{2})?/
+    );
+
+    if (!range) continue;
+
+    const startText =
+      `${range[1]}/${range[2]}/${range[3]} ${range[4]}:${range[5]}:00`;
+    const endTextRaw =
+      `${range[6]}/${range[7]}/${range[8]} ${range[9]}:${range[10]}:59`;
+
+    const startMs = parseRakutenJstDateTime(startText);
+    const endMs = parseRakutenJstDateTime(endTextRaw);
+    const endText = formatRakutenJstMinute(endTextRaw);
+
+    if (
+      startMs === null ||
+      endMs === null ||
+      endMs < startMs ||
+      !endText
+    ) {
+      continue;
+    }
+
+    periods.push({ startMs, endMs, endText });
+  }
+
+  const now = Date.now();
+
+  const active = periods
+    .filter((period) => period.startMs <= now && now <= period.endMs)
+    .sort((a, b) => a.endMs - b.endMs);
+
+  if (active.length > 0) return active[0].endText;
+
+  const upcoming = periods
+    .filter((period) => period.startMs > now)
+    .sort((a, b) => a.startMs - b.startMs);
+
+  return upcoming[0]?.endText ?? null;
+}
+
+function getRakutenCalendarSaleEndTime(html: string): string | null {
+  const hrefPattern =
+    /href=["']([^"']*my\.calendar\.rakuten\.co\.jp\/add\/evt\/1\/\?[^"']+)["']/gi;
+
+  for (const match of html.matchAll(hrefPattern)) {
+    const href = decodeHtmlEntities(match[1]);
+
+    try {
+      const url = new URL(href);
+      const rawEnd = url.searchParams.get("ed");
+
+      if (!rawEnd) continue;
+
+      const decodedEnd = decodeURIComponent(rawEnd);
+      const endMatch = decodedEnd.match(
+        /^(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2})時(\d{2})分$/
+      );
+
+      if (!endMatch) continue;
+
+      const endText =
+        `${endMatch[1]}/${endMatch[2].padStart(2, "0")}/${endMatch[3].padStart(
+          2,
+          "0"
+        )} ${endMatch[4].padStart(2, "0")}:${endMatch[5]}`;
+
+      const endMs = Date.parse(
+        `${endMatch[1]}-${endMatch[2].padStart(
+          2,
+          "0"
+        )}-${endMatch[3].padStart(2, "0")}T${endMatch[4].padStart(
+          2,
+          "0"
+        )}:${endMatch[5]}:59+09:00`
+      );
+
+      if (!Number.isNaN(endMs) && endMs >= Date.now()) {
+        return endText;
+      }
+    } catch {
+      // Ignore malformed calendar links.
+    }
+  }
+
+  return null;
+}
+
+function getRakutenPageSaleEndTime(html: string): string | null {
+  return (
+    getRakutenPageTimeSaleEndTime(html) ??
+    getRakutenVisibleSalePeriodEndTime(html) ??
+    getRakutenCalendarSaleEndTime(html)
+  );
+}
+
+function normalizeRakutenHtmlCharset(
+  rawCharset: string | null | undefined
+): string | null {
+  const charset = String(rawCharset ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^["']|["']$/g, "");
+
+  if (!charset) return null;
+  if (charset === "utf8" || charset === "utf-8") return "utf-8";
+
+  if (
+    [
+      "shift_jis",
+      "shift-jis",
+      "sjis",
+      "x-sjis",
+      "windows-31j",
+      "cp932",
+      "ms932",
+    ].includes(charset)
+  ) {
+    return "shift_jis";
+  }
+
+  if (["euc-jp", "euc_jp", "x-euc-jp"].includes(charset)) {
+    return "euc-jp";
+  }
+
+  if (charset === "iso-2022-jp" || charset === "jis") {
+    return "iso-2022-jp";
+  }
+
+  return null;
+}
+
+function detectRakutenHtmlCharset(
+  bytes: Uint8Array,
+  contentType: string | null
+): string | null {
+  const headerMatch = String(contentType ?? "").match(
+    /charset\s*=\s*["']?\s*([a-z0-9._-]+)/i
+  );
+  const headerCharset = normalizeRakutenHtmlCharset(headerMatch?.[1]);
+
+  if (headerCharset) return headerCharset;
+
+  try {
+    const probe = new TextDecoder("windows-1252").decode(
+      bytes.slice(0, Math.min(bytes.length, 32768))
+    );
+    const metaMatch = probe.match(
+      /charset\s*=\s*["']?\s*([a-z0-9._-]+)/i
+    );
+
+    return normalizeRakutenHtmlCharset(metaMatch?.[1]);
+  } catch {
+    return null;
+  }
+}
+
+function decodeRakutenHtml(
+  bytes: Uint8Array,
+  contentType: string | null
+): string {
+  const detectedCharset = detectRakutenHtmlCharset(bytes, contentType);
+  const candidates = Array.from(
+    new Set(
+      [
+        detectedCharset,
+        "utf-8",
+        "shift_jis",
+        "euc-jp",
+        "iso-2022-jp",
+      ].filter((value): value is string => Boolean(value))
+    )
+  );
+
+  let bestHtml = "";
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const charset of candidates) {
+    try {
+      const html = new TextDecoder(charset).decode(bytes);
+      const replacementCount = (html.match(/\uFFFD/g) ?? []).length;
+      const japaneseCount = (
+        html.match(/[\u3040-\u30ff\u3400-\u9fff]/g) ?? []
+      ).length;
+      const score =
+        Math.min(japaneseCount, 3000) -
+        replacementCount * 100 +
+        (detectedCharset === charset ? 5000 : 0);
+
+      if (score > bestScore) {
+        bestHtml = html;
+        bestScore = score;
+      }
+    } catch {
+      // Unsupported decoder candidates are ignored.
+    }
+  }
+
+  return bestHtml || new TextDecoder("utf-8").decode(bytes);
+}
+
+function normalizeRakutenImageCandidate(value: string): string | null {
+  const normalized = String(value ?? "")
+    .replace(/\\u002F/gi, "/")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/gi, "&")
+    .trim();
+
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const hostname = url.hostname.toLowerCase();
+
+    if (
+      hostname !== "image.rakuten.co.jp" &&
+      hostname !== "thumbnail.image.rakuten.co.jp" &&
+      hostname !== "shop.r10s.jp"
+    ) {
+      return null;
+    }
+
+    if (
+      hostname === "thumbnail.image.rakuten.co.jp" &&
+      url.pathname === "/t.gif"
+    ) {
+      return null;
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function getRakutenPageImageCandidates(html: string): string[] {
+  const candidates: string[] = [];
+
+  const add = (value: unknown) => {
+    if (typeof value === "string") {
+      const normalized = normalizeRakutenImageCandidate(value);
+      if (normalized) candidates.push(normalized);
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach(add);
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      add(record.url);
+      add(record.contentUrl);
+      add(record.image);
+    }
+  };
+
+  const jsonLd = getJsonLdProduct(html);
+  add(jsonLd?.image);
+  add(getMetaContent(html, "property", "og:image"));
+  add(getMetaContent(html, "name", "twitter:image"));
+  add(getEmbeddedJsonString(html, "imageUrl"));
+
+  const imagePattern =
+    /https?:\\?\/\\?\/(?:image\.rakuten\.co\.jp|thumbnail\.image\.rakuten\.co\.jp|shop\.r10s\.jp)\\?\/[^"'<>\\s]+/gi;
+
+  for (const match of html.matchAll(imagePattern)) {
+    add(match[0]);
+  }
+
+  return Array.from(new Set(candidates));
+}
+
+function buildPageSearchKeywords(title: string): string[] {
+  const cleaned = title
+    .replace(/【[^】]*】/g, " ")
+    .replace(/[|｜／/・,，!！?？()（）「」『』【】]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = cleaned
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2)
+    .filter((token) => !/^(送料無料|訳あり|無塩|半額|OFF)$/i.test(token));
+
+  return uniqueNonEmpty([
+    cleaned.slice(0, 80),
+    tokens.slice(0, 4).join(" "),
+    tokens.slice(0, 3).join(" "),
+    tokens.slice(0, 2).join(" "),
+    ...tokens.slice(0, 5),
+  ]);
+}
+
 function getRakutenImageUrl(
   value: string | { imageUrl?: string } | undefined
 ): string | undefined {
   if (typeof value === "string") return value;
   return value?.imageUrl;
 }
+
+function getRakutenApiImageCandidates(item: RakutenApiItem): string[] {
+  return Array.from(
+    new Set(
+      [
+        ...(item.mediumImageUrls ?? []).map(getRakutenImageUrl),
+        ...(item.smallImageUrls ?? []).map(getRakutenImageUrl),
+      ]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function chooseWorkingRakutenAffiliateImage(
+  rawCandidates: string[]
+): Promise<string | null> {
+  const candidates = Array.from(
+    new Set(
+      rawCandidates
+        .map((value) => normalizeRakutenImageCandidate(value) ?? value.trim())
+        .filter(Boolean)
+    )
+  );
+
+  for (const rawImageUrl of candidates) {
+    const affiliateImageUrl = createRakutenAffiliateImageUrl(rawImageUrl);
+
+    if (!affiliateImageUrl) continue;
+
+    if (!RAKUTEN_AFFILIATE_ID) {
+      return affiliateImageUrl;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(affiliateImageUrl, {
+        method: "GET",
+        redirect: "follow",
+        cache: "no-store",
+        headers: {
+          Accept:
+            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        },
+        signal: controller.signal,
+      });
+
+      const finalUrl = response.url || "";
+      const contentType = String(
+        response.headers.get("content-type") ?? ""
+      ).toLowerCase();
+
+      let isMissingGif = false;
+
+      try {
+        const final = new URL(finalUrl);
+        isMissingGif =
+          final.hostname.toLowerCase() ===
+            "thumbnail.image.rakuten.co.jp" &&
+          final.pathname === "/t.gif";
+      } catch {
+        isMissingGif = false;
+      }
+
+      const looksLikeImage =
+        contentType.startsWith("image/") ||
+        /\.(?:avif|gif|jpe?g|png|webp)(?:\?|$)/i.test(finalUrl);
+
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Nothing to do.
+      }
+
+      if (response.ok && looksLikeImage && !isMissingGif) {
+        return affiliateImageUrl;
+      }
+    } catch (error) {
+      console.warn("[rakuten] affiliate image check failed:", {
+        rawImageUrl,
+        error,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  return null;
+}
+
+async function rakutenApiItemToPreview(
+  item: RakutenApiItem,
+  rawUrl: string,
+  shopCode: string,
+  useApiSaleEndTime = false
+): Promise<RakutenItemPreview> {
+  return {
+    title: String(item.itemName ?? ""),
+    price: Number(item.itemPrice) || 0,
+    imageUrl: await chooseWorkingRakutenAffiliateImage(
+      getRakutenApiImageCandidates(item)
+    ),
+    itemUrl: String(item.itemUrl ?? rawUrl),
+    shopName: String(item.shopName ?? ""),
+    shopCode,
+    freeShipping: getFreeShippingFromPostageFlag(item.postageFlag),
+    itemDescription: cleanRakutenItemCaption(item.itemCaption),
+
+    // 投稿期限には「itemCode完全一致」で取得した同一商品の
+    // Rakuten Ichiba Item Search API endTime だけを使用する。
+    endTime: useApiSaleEndTime
+      ? String(item.endTime ?? "").trim() || null
+      : null,
+  };
+}
+
 function getFreeShippingFromPostageFlag(
   postageFlag: number | string | undefined
 ): boolean | null {
@@ -486,6 +1356,172 @@ function cleanRakutenItemCaption(value: string | undefined | null): string | nul
     .trim();
   return text || null;
 }
+
+
+async function fetchRakutenProductHtml(
+  canonicalUrl: string,
+  mobile = false
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(canonicalUrl, {
+      method: "GET",
+      redirect: "follow",
+      cache: "no-store",
+      headers: {
+        "User-Agent": mobile
+          ? "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1"
+          : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.8,en;q=0.6",
+        "Cache-Control": "no-cache",
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) return null;
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const html = decodeRakutenHtml(
+      bytes,
+      response.headers.get("content-type")
+    );
+
+    return html && html.length >= 500 ? html : null;
+  } catch (error) {
+    console.warn("[rakuten] product page fetch failed:", {
+      canonicalUrl,
+      mobile,
+      error,
+    });
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchRakutenPageFallback(
+  rawUrl: string,
+  shopCode: string
+): Promise<RakutenItemPreview | null> {
+  const canonicalUrl = toCanonicalRakutenItemUrl(rawUrl);
+  try {
+    let html = await fetchRakutenProductHtml(canonicalUrl, false);
+
+    if (!html) {
+      html = await fetchRakutenProductHtml(canonicalUrl, true);
+    }
+
+    if (!html) return null;
+
+    const jsonLd = getJsonLdProduct(html);
+    const titleParts = parseRakutenPageTitle(html);
+
+    const title = String(
+      jsonLd?.name ??
+        getEmbeddedJsonString(html, "itemName") ??
+        titleParts.title ??
+        ""
+    )
+      .replace(/^【楽天市場】\s*/, "")
+      .trim();
+
+    let price =
+      getOfferPrice(jsonLd?.offers) ??
+      toPositivePrice(
+        getMetaContent(html, "property", "product:price:amount")
+      ) ??
+      toPositivePrice(getMetaContent(html, "itemprop", "price")) ??
+      getEmbeddedPrice(html);
+
+    if (price === null) {
+      const bodyText = stripHtml(html);
+
+      for (const label of ["販売価格", "商品価格", "価格"]) {
+        const index = bodyText.indexOf(label);
+        if (index < 0) continue;
+
+        const nearby = bodyText.slice(index, index + 180);
+        const match = nearby.match(
+          /([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{2,9})\s*円/
+        );
+        price = toPositivePrice(match?.[1]);
+
+        if (price !== null) break;
+      }
+    }
+
+    if (!title || price === null) return null;
+
+    const shopName =
+      getSellerName(jsonLd?.offers) ??
+      getEmbeddedJsonString(html, "shopName") ??
+      titleParts.shopName ??
+      shopCode;
+
+    const description = String(
+      jsonLd?.description ??
+        getMetaContent(html, "name", "description") ??
+        getMetaContent(html, "property", "og:description") ??
+        ""
+    ).trim();
+
+    // タイトルから期限は推測しない。
+    // APIにendTimeが無い場合のfallbackとして、楽天商品ページ自身が
+    // 初期状態に持つtimeSale.start/endだけを使用する。
+    let endTime = getRakutenPageSaleEndTime(html);
+
+    if (!endTime) {
+      const mobileHtml = await fetchRakutenProductHtml(
+        canonicalUrl,
+        true
+      );
+
+      if (mobileHtml) {
+        endTime = getRakutenPageSaleEndTime(mobileHtml);
+      }
+    }
+
+    const imageUrl = await chooseWorkingRakutenAffiliateImage(
+      getRakutenPageImageCandidates(html)
+    );
+
+    return {
+      title,
+      price,
+      imageUrl,
+      itemUrl: canonicalUrl,
+      shopName,
+      shopCode,
+      freeShipping: null,
+      itemDescription: cleanRakutenItemCaption(description),
+      endTime,
+    };
+  } catch (error) {
+    console.warn("[rakuten] page fallback failed:", error);
+    return null;
+  }
+}
+
+async function mergePageTruth(
+  apiPreview: RakutenItemPreview,
+  rawUrl: string,
+  shopCode: string
+): Promise<RakutenItemPreview> {
+  const page = await fetchRakutenPageFallback(rawUrl, shopCode);
+
+  if (!page) return apiPreview;
+
+  return {
+    ...apiPreview,
+    imageUrl: apiPreview.imageUrl ?? page.imageUrl,
+    endTime: apiPreview.endTime ?? page.endTime,
+  };
+}
+
 function parseRakutenUtcDateTime(
   value: string | undefined | null
 ): number | null {
@@ -705,16 +1741,29 @@ export async function fetchRakutenItemByUrl(
   if (!RAKUTEN_APP_ID) {
     throw new Error("RAKUTEN_APP_ID が設定されていません。");
   }
+
   if (!RAKUTEN_ACCESS_KEY) {
     throw new Error("RAKUTEN_ACCESS_KEY が設定されていません。");
   }
+
   const { shopCode, itemId } = parseRakutenItemUrl(rawUrl);
+
+  // 1. 現行APIの itemCode で完全一致を最優先する。
+  const exactItem = await searchRakutenItemByCode(shopCode, itemId);
+
+  if (exactItem) {
+    const apiPreview = await rakutenApiItemToPreview(
+      exactItem,
+      rawUrl,
+      shopCode,
+      true
+    );
+
+    return mergePageTruth(apiPreview, rawUrl, shopCode);
+  }
+
+  // 2. 元の安定版と同じ itemId keyword fallback。
   const keywords = buildKeywordCandidates(itemId);
-  console.log("[rakuten] parsed url:", {
-    shopCode,
-    itemId,
-    keywords,
-  });
   let allCandidates: RakutenApiItem[] = [];
 
   for (const keyword of keywords) {
@@ -723,90 +1772,80 @@ export async function fetchRakutenItemByUrl(
       keyword,
       hits: 30,
     });
-    if (items.length > 0) {
-      allCandidates = [...allCandidates, ...items];
-      const chosen = chooseBestRakutenItem(allCandidates, shopCode, itemId);
-      if (chosen) {
-        console.log("[rakuten] chosen by keyword:", keyword, {
-          itemUrl: chosen.itemUrl,
-          unwrappedUrl: unwrapRakutenUrl(String(chosen.itemUrl ?? "")),
-        });
-        console.log("[rakuten] chosen itemCaption:", {
-          type: typeof chosen.itemCaption,
-          length:
-            typeof chosen.itemCaption === "string"
-              ? chosen.itemCaption.length
-              : null,
-          value: chosen.itemCaption ?? null,
-        });
-        console.log(
-          "[rakuten] cleaned itemDescription:",
-          cleanRakutenItemCaption(chosen.itemCaption)
-        );
-        const rawImageUrl =
-          getRakutenImageUrl(chosen.mediumImageUrls?.[0]) ??
-          getRakutenImageUrl(chosen.smallImageUrls?.[0]);
-        return {
-          title: String(chosen.itemName ?? ""),
-          price: Number(chosen.itemPrice) || 0,
-          imageUrl: createRakutenAffiliateImageUrl(rawImageUrl),
-          itemUrl: String(chosen.itemUrl ?? rawUrl),
-          shopName: String(chosen.shopName ?? ""),
-          shopCode,
-          freeShipping: getFreeShippingFromPostageFlag(
-            chosen.postageFlag
-          ),
-          itemDescription: cleanRakutenItemCaption(chosen.itemCaption),
-          endTime: String(chosen.endTime ?? "").trim() || null,
-        };
-      }
+
+    if (items.length === 0) continue;
+
+    allCandidates = [...allCandidates, ...items];
+    const chosen = chooseBestRakutenItem(
+      allCandidates,
+      shopCode,
+      itemId
+    );
+
+    if (chosen) {
+      const apiPreview = await rakutenApiItemToPreview(
+        chosen,
+        rawUrl,
+        shopCode
+      );
+
+      return mergePageTruth(apiPreview, rawUrl, shopCode);
     }
   }
-  const deduped = Array.from(
-    new Map(
-      allCandidates.map((item) => [String(item.itemUrl ?? Math.random()), item])
-    ).values()
-  );
-  const finalChosen = chooseBestRakutenItem(deduped, shopCode, itemId);
-  if (!finalChosen) {
-    console.error("[rakuten] no matched item. final candidates:", {
-      shopCode,
-      itemId,
-      keywords,
-      candidateUrls: deduped.slice(0, 10).map((i) => i.itemUrl),
-      candidateUnwrappedUrls: deduped
-        .slice(0, 10)
-        .map((i) => unwrapRakutenUrl(String(i.itemUrl ?? ""))),
-      candidateNames: deduped.slice(0, 10).map((i) => i.itemName),
-    });
-    throw new Error("楽天の商品が見つかりませんでした。");
+
+  // 3. APIに出ない商品だけ商品ページを読む。
+  const pagePreview = await fetchRakutenPageFallback(rawUrl, shopCode);
+
+  if (!pagePreview) {
+    throw new Error(
+      "楽天の商品情報を取得できませんでした。時間をおいてもう一度お試しください。"
+    );
   }
-  const rawImageUrl =
-    getRakutenImageUrl(finalChosen.mediumImageUrls?.[0]) ??
-    getRakutenImageUrl(finalChosen.smallImageUrls?.[0]);
-  const preview: RakutenItemPreview = {
-    title: String(finalChosen.itemName ?? ""),
-    price: Number(finalChosen.itemPrice) || 0,
-    imageUrl: createRakutenAffiliateImageUrl(rawImageUrl),
-    itemUrl: String(finalChosen.itemUrl ?? rawUrl),
-    shopName: String(finalChosen.shopName ?? ""),
-    shopCode,
-    freeShipping: getFreeShippingFromPostageFlag(
-      finalChosen.postageFlag
-    ),
-    itemDescription: cleanRakutenItemCaption(finalChosen.itemCaption),
-    endTime: String(finalChosen.endTime ?? "").trim() || null,
-  };
-  console.log("[rakuten] final preview:", {
-    title: preview.title,
-    price: preview.price,
-    itemUrl: preview.itemUrl,
-    unwrappedItemUrl: unwrapRakutenUrl(preview.itemUrl),
-    imageUrl: preview.imageUrl,
-    freeShipping: preview.freeShipping,
-  });
-  return preview;
+
+  // 4. 商品IDでは検索に出ないケースでも、ページ上の商品名なら
+  //    同じショップの商品がAPIに出る場合がある。
+  //    API画像・送料無料情報を回収するためだけに限定して再検索する。
+  const pageKeywords = buildPageSearchKeywords(pagePreview.title);
+
+  for (const keyword of pageKeywords) {
+    let items: RakutenApiItem[] = [];
+
+    try {
+      items = await searchRakutenItems({
+        shopCode,
+        keyword,
+        hits: 30,
+      });
+    } catch (error) {
+      console.warn("[rakuten] page-title API enrichment skipped:", {
+        keyword,
+        error,
+      });
+      continue;
+    }
+
+    const chosen = chooseBestRakutenItem(items, shopCode, itemId);
+
+    if (!chosen) continue;
+
+    const apiPreview = await rakutenApiItemToPreview(
+      chosen,
+      rawUrl,
+      shopCode
+    );
+
+    return {
+      ...pagePreview,
+      imageUrl: apiPreview.imageUrl ?? pagePreview.imageUrl,
+      freeShipping:
+        apiPreview.freeShipping ?? pagePreview.freeShipping,
+    };
+  }
+
+  // APIに存在しない場合も、商品ページから確認できた情報だけで返す。
+  return pagePreview;
 }
+
 export function createRakutenAffiliateLinkByUrl(itemUrl: string): string {
   if (!RAKUTEN_AFFILIATE_ID) {
     throw new Error(

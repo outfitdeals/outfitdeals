@@ -5,6 +5,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+function getSafeReturnTo() {
+  if (typeof window === "undefined") return "/mypage";
+
+  const raw = new URLSearchParams(window.location.search).get("next");
+
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/auth")) {
+    return "/mypage";
+  }
+
+  return raw;
+}
+
 export default function AuthPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -36,7 +48,7 @@ export default function AuthPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(getSafeReturnTo())}`,
       },
     });
 
@@ -68,7 +80,7 @@ export default function AuthPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "custom:line-oauth" as any,
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(getSafeReturnTo())}`,
       },
     });
 
@@ -97,8 +109,8 @@ export default function AuthPage() {
         return;
       }
 
-      if (trimmed.length < 2 || trimmed.length > 20) {
-        setMessage("ユーザー名は2〜20文字にしてください。");
+      if (trimmed.length < 2 || trimmed.length > 10) {
+        setMessage("ユーザー名は2〜10文字にしてください。");
         return;
       }
 
@@ -137,7 +149,7 @@ export default function AuthPage() {
         return;
       }
 
-      router.push("/mypage");
+      router.push(getSafeReturnTo());
       router.refresh();
     }
   };
@@ -266,15 +278,16 @@ export default function AuthPage() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                maxLength={10}
                 className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
                 placeholder="例：トクミッケ太郎"
                 required
               />
               <p className="mt-1 text-xs text-slate-500">
-                コメントなどに表示される名前です。（2〜20文字）
+                コメントなどに表示される名前です。（2〜10文字）
               </p>
               <p className="mt-1 text-xs font-semibold text-amber-700">
-                ※ ユーザー名は登録後に変更できません。登録前に入力内容をご確認ください。
+                ※ ユーザー名は登録後も変更できますが、変更後90日間は再変更できません。
               </p>
             </div>
           )}

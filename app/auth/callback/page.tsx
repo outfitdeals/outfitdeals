@@ -6,6 +6,18 @@ import { supabase } from "@/lib/supabaseClient";
 
 const CONSENT_KEY = "tokumikke_oauth_signup_consent";
 
+function getSafeReturnTo() {
+  if (typeof window === "undefined") return "/mypage";
+
+  const raw = new URLSearchParams(window.location.search).get("next");
+
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/auth")) {
+    return "/mypage";
+  }
+
+  return raw;
+}
+
 export default function AuthCallbackPage() {
   const router = useRouter();
 
@@ -13,6 +25,7 @@ export default function AuthCallbackPage() {
     let cancelled = false;
 
     const finishOAuth = async () => {
+      const returnTo = getSafeReturnTo();
       const consentAt =
         sessionStorage.getItem(CONSENT_KEY) ||
         localStorage.getItem(CONSENT_KEY);
@@ -23,7 +36,7 @@ export default function AuthCallbackPage() {
 
       if (error || !data.session?.user) {
         console.error("OAuth callback session error:", error);
-        router.replace("/auth");
+        router.replace(`/auth?next=${encodeURIComponent(returnTo)}`);
         return;
       }
 
@@ -42,7 +55,7 @@ export default function AuthCallbackPage() {
 
       if (profileError) {
         console.error("OAuth profile check error:", profileError);
-        router.replace("/mypage");
+        router.replace(returnTo);
         router.refresh();
         return;
       }
@@ -73,7 +86,7 @@ export default function AuthCallbackPage() {
           sessionStorage.removeItem(CONSENT_KEY);
         }
 
-        router.replace("/auth/setup-profile");
+        router.replace(`/auth/setup-profile?next=${encodeURIComponent(returnTo)}`);
         return;
       }
 
@@ -83,7 +96,7 @@ export default function AuthCallbackPage() {
       }
 
       if (!cancelled) {
-        router.replace("/mypage");
+        router.replace(returnTo);
         router.refresh();
       }
     };

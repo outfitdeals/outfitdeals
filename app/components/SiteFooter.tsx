@@ -12,13 +12,13 @@ const links = [
 
 export default function SiteFooter() {
   return (
-    <footer className="border-t border-slate-200 bg-white">
+    <footer className="mt-12 border-t border-slate-200 bg-white">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="flex flex-col items-center gap-5">
           <Link
             href="/"
             aria-label="トクミッケ ホーム"
-            className="cursor-pointer transition-opacity hover:opacity-75"
+            className="transition-opacity hover:opacity-75"
           >
             <Image
               src="/tokumikke_logo.png"
@@ -37,7 +37,7 @@ export default function SiteFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="cursor-pointer transition-colors hover:text-[#006888]"
+                className="transition-colors hover:text-[#006888]"
               >
                 {link.label}
               </Link>
@@ -45,6 +45,14 @@ export default function SiteFooter() {
           </nav>
 
           <div className="h-px w-full max-w-3xl bg-slate-100" />
+
+          <a
+            href="https://developers.rakuten.com/"
+            target="_blank"
+            className="cursor-pointer text-xs text-slate-500 hover:text-[#006888]"
+          >
+            Supported by Rakuten Developers
+          </a>
 
           <p className="text-center text-xs text-slate-400">
             © 2026 トクミッケ

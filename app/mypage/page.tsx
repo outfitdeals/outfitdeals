@@ -440,11 +440,14 @@ function MyPageContent() {
   const [lineLinkMsg, setLineLinkMsg] = useState<string | null>(null);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteAccountMsg, setDeleteAccountMsg] = useState<string | null>(null);
+  const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
+  const [deleteAccountConfirmText, setDeleteAccountConfirmText] = useState("");
 
   const [myDeals, setMyDeals] = useState<DealRow[]>([]);
   const [myComments, setMyComments] = useState<MyCommentRow[]>([]);
   const [myReplies, setMyReplies] = useState<MyReplyRow[]>([]);
   const [myLikes, setMyLikes] = useState<MyLikeRow[]>([]);
+  const [myDislikes, setMyDislikes] = useState<MyLikeRow[]>([]);
   const [myCommentReactions, setMyCommentReactions] = useState<MyCommentReactionRow[]>([]);
   const [commentLikesReceived, setCommentLikesReceived] = useState(0);
   const [savedRows, setSavedRows] = useState<SavedRow[]>([]);
@@ -550,7 +553,8 @@ function MyPageContent() {
     const { data, error } = await supabase
       .from("deals")
       .select("id, public_id, shop_id, item_id, title, image_url, price, shop_name, is_expired")
-      .in("id", unknown);
+      .in("id", unknown)
+      .eq("moderation_status", "visible");
 
     if (error) {
       unknown.forEach((id) => {
@@ -592,6 +596,7 @@ function MyPageContent() {
         "id, public_id, shop_id, item_id, created_at, user_id, title, price, market, shop_name, deal_url, image_url, expires_at, is_expired, likes_count, comments_count"
       )
       .eq("user_id", user.id)
+      .eq("moderation_status", "visible")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -746,6 +751,36 @@ function MyPageContent() {
 
     const ids = rows
       .map((l) => l.deal_id)
+      .filter((v): v is string => !!v);
+
+    await upsertDealMinis(ids);
+  }, [user, upsertDealMinis]);
+
+  const loadMyDislikes = useCallback(async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("deal_dislikes")
+      .select("id, created_at, deal_id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("load my dislikes error:", error);
+      setMyDislikes([]);
+      return;
+    }
+
+    const rows = (data ?? []).map((r: any) => ({
+      id: String(r.id),
+      created_at: r.created_at,
+      deal_id: r.deal_id ? String(r.deal_id) : null,
+    })) as MyLikeRow[];
+
+    setMyDislikes(rows);
+
+    const ids = rows
+      .map((d) => d.deal_id)
       .filter((v): v is string => !!v);
 
     await upsertDealMinis(ids);
@@ -1077,6 +1112,7 @@ function MyPageContent() {
         loadMyComments(),
         loadMyReplies(),
         loadMyLikes(),
+        loadMyDislikes(),
         loadMyCommentReactions(),
         loadSaved(),
         loadNotifications(),
@@ -1088,6 +1124,7 @@ function MyPageContent() {
     loadMyComments,
     loadMyReplies,
     loadMyLikes,
+    loadMyDislikes,
     loadMyCommentReactions,
     loadSaved,
     loadNotifications,
@@ -1156,6 +1193,7 @@ function MyPageContent() {
       myComments[0]?.created_at,
       myReplies[0]?.created_at,
       myLikes[0]?.created_at,
+      myDislikes[0]?.created_at,
       myCommentReactions[0]?.created_at,
       savedRows[0]?.created_at,
     ].filter(Boolean) as string[];
@@ -1167,7 +1205,7 @@ function MyPageContent() {
     )[0];
 
     return fmtJP(newest);
-  }, [myDeals, myComments, myReplies, myLikes, myCommentReactions, savedRows]);
+  }, [myDeals, myComments, myReplies, myLikes, myDislikes, myCommentReactions, savedRows]);
 
   const bestDeal = useMemo(() => {
     if (!myDeals || myDeals.length === 0) return null;
@@ -1242,6 +1280,12 @@ function MyPageContent() {
         deal_id: string;
       }
     | {
+        type: "dislike";
+        id: string;
+        created_at: string;
+        deal_id: string;
+      }
+    | {
         type: "reaction";
         id: string;
         created_at: string;
@@ -1279,6 +1323,17 @@ function MyPageContent() {
         id: l.id,
         created_at: l.created_at,
         deal_id: l.deal_id,
+      });
+    });
+
+    myDislikes.forEach((d) => {
+      if (!d.deal_id) return;
+
+      items.push({
+        type: "dislike",
+        id: d.id,
+        created_at: d.created_at,
+        deal_id: d.deal_id,
       });
     });
 
@@ -1328,7 +1383,7 @@ function MyPageContent() {
     );
 
     return items;
-  }, [myLikes, myCommentReactions, myComments, myReplies]);
+  }, [myLikes, myDislikes, myCommentReactions, myComments, myReplies]);
 
   const activityFiltered = useMemo(() => {
     if (activityTab === "comments") {
@@ -1339,7 +1394,7 @@ function MyPageContent() {
 
     if (activityTab === "likes") {
       return allActivity.filter(
-        (x) => x.type === "like" || x.type === "reaction"
+        (x) => x.type === "like" || x.type === "dislike" || x.type === "reaction"
       );
     }
 
@@ -1662,14 +1717,30 @@ function MyPageContent() {
     window.location.href = "/";
   };
 
+  const handleOpenDeleteAccountConfirm = () => {
+    if (deletingAccount) return;
+
+    setDeleteAccountMsg(null);
+    setDeleteAccountConfirmText("");
+    setShowDeleteAccountConfirm(true);
+  };
+
+  const handleCancelDeleteAccount = () => {
+    if (deletingAccount) return;
+
+    setDeleteAccountMsg(null);
+    setDeleteAccountConfirmText("");
+    setShowDeleteAccountConfirm(false);
+  };
+
   const handleDeleteAccount = async () => {
-    if (!user || deletingAccount) return;
-
-    const confirmed = window.confirm(
-      "アカウントを削除しますか？\n\nこの操作は取り消せません。投稿・コメント・返信はサイト上に残りますが、アカウントとの紐付けは解除されます。保存・リアクションなどのアカウントデータは削除されます。"
-    );
-
-    if (!confirmed) return;
+    if (
+      !user ||
+      deletingAccount ||
+      deleteAccountConfirmText.trim() !== "削除する"
+    ) {
+      return;
+    }
 
     try {
       setDeletingAccount(true);
@@ -1698,9 +1769,15 @@ function MyPageContent() {
       if (!response.ok) {
         const result = await response.json().catch(() => null);
         console.error("delete account error:", result);
-        setDeleteAccountMsg(
-          "アカウントを削除できませんでした。時間をおいてもう一度お試しください。"
-        );
+
+        if (response.status === 403) {
+          setDeleteAccountMsg("この管理者アカウントは削除できません。");
+        } else {
+          setDeleteAccountMsg(
+            "アカウントを削除できませんでした。時間をおいてもう一度お試しください。"
+          );
+        }
+
         return;
       }
 
@@ -1865,8 +1942,17 @@ function MyPageContent() {
 
   const countDeals = myDeals.length;
   const countComments = myComments.length + myReplies.length;
-  const countLikes = myLikes.length + myCommentReactions.length;
+  const countLikes = myLikes.length + myDislikes.length + myCommentReactions.length;
   const countSaved = savedRows.length;
+  const participatedDealIds = useMemo(
+    () =>
+      new Set(
+        [...myComments, ...myReplies]
+          .map((item) => item.deal_id)
+          .filter((dealId): dealId is string => !!dealId)
+      ),
+    [myComments, myReplies]
+  );
   const countDealLikesReceived = useMemo(
     () =>
       myDeals.reduce(
@@ -2249,7 +2335,12 @@ function MyPageContent() {
                         {Number(bestDeal.likes_count ?? 0)}
                       </span>
                       <span className="inline-flex items-center gap-1">
-                        <MessageSquare className="h-3.5 w-3.5" />
+                        <MessageSquare
+                          className={`h-3.5 w-3.5 ${
+                            participatedDealIds.has(bestDeal.id) ? "text-[#001e43]" : ""
+                          }`}
+                          fill={participatedDealIds.has(bestDeal.id) ? "currentColor" : "none"}
+                        />
                         {Number(bestDeal.comments_count ?? 0)}
                       </span>
                     </div>
@@ -2343,15 +2434,20 @@ function MyPageContent() {
                             <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-900">
                               {item.type === "like" ? (
                                 <>
-                                  <span className="text-blue-600">👍</span>
+                                  <span className="text-[#006888]">👍</span>
                                   <span>ディールにおトク！しました</span>
+                                </>
+                              ) : item.type === "dislike" ? (
+                                <>
+                                  <span className="text-[#f59e0b]">👎</span>
+                                  <span>ディールにイマイチしました</span>
                                 </>
                               ) : item.type === "reaction" ? (
                                 <>
                                   <span
                                     className={
                                       item.reaction_type === "deal"
-                                        ? "text-blue-600"
+                                        ? "text-[#006888]"
                                         : item.reaction_type === "not_helpful"
                                           ? "text-red-500"
                                           : "text-slate-600"
@@ -2612,7 +2708,12 @@ function MyPageContent() {
                           </span>
 
                           <span className="inline-flex items-center gap-1">
-                            <MessageSquare className="h-3.5 w-3.5" />
+                            <MessageSquare
+                              className={`h-3.5 w-3.5 ${
+                                participatedDealIds.has(deal.id) ? "text-[#001e43]" : ""
+                              }`}
+                              fill={participatedDealIds.has(deal.id) ? "currentColor" : "none"}
+                            />
                             {Number(deal.comments_count ?? 0)}
                           </span>
 
@@ -3319,7 +3420,7 @@ function MyPageContent() {
                   </p>
                 </div>
 
-                <div className="flex flex-col items-start gap-4">
+                <div>
                   <button
                     type="button"
                     onClick={handleLogout}
@@ -3328,28 +3429,83 @@ function MyPageContent() {
                   >
                     ログアウト
                   </button>
+                </div>
+              </div>
 
-                  <div className="w-full max-w-xl border-t border-slate-200 pt-4">
-                    <div className="text-sm font-bold text-red-700">アカウントを削除</div>
-                    <p className="mt-1 text-xs leading-5 text-slate-500">
-                      アカウントを削除すると元に戻せません。投稿・コメント・返信は残りますが、アカウントとの紐付けは解除されます。
-                    </p>
+              <div className="grid gap-4 px-4 py-6 sm:grid-cols-[220px_minmax(0,1fr)] sm:px-6">
+                <div>
+                  <div className="text-sm font-bold text-slate-900">
+                    アカウントを削除
+                  </div>
+                </div>
 
+                <div className="w-full max-w-xl">
+                  {!showDeleteAccountConfirm ? (
                     <button
                       type="button"
-                      onClick={handleDeleteAccount}
+                      onClick={handleOpenDeleteAccountConfirm}
                       disabled={deletingAccount}
-                      className="mt-3 inline-flex cursor-pointer items-center justify-center rounded-md border border-red-300 bg-white px-4 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex cursor-pointer items-center justify-center rounded-md border border-red-300 bg-white px-4 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {deletingAccount ? "削除中…" : "アカウントを削除する"}
+                      アカウントを削除する
                     </button>
-
-                    {deleteAccountMsg ? (
-                      <p className="mt-2 text-xs font-medium text-red-700">
-                        {deleteAccountMsg}
+                  ) : (
+                    <div>
+                      <p className="text-xs leading-5 text-slate-600">
+                        アカウントを削除すると元に戻せません。投稿・コメント・返信はサイト上に残りますが、アカウントとの紐付けは解除されます。保存・リアクションなどのアカウントデータは削除されます。
                       </p>
-                    ) : null}
-                  </div>
+                      <p className="mt-3 text-xs leading-5 text-slate-600">
+                        削除を続けるには、下の入力欄に
+                        <span className="font-bold text-slate-900">「削除する」</span>
+                        と入力してください。
+                      </p>
+
+                      <input
+                        type="text"
+                        value={deleteAccountConfirmText}
+                        onChange={(e) => {
+                          setDeleteAccountConfirmText(e.target.value);
+                          setDeleteAccountMsg(null);
+                        }}
+                        disabled={deletingAccount}
+                        autoComplete="off"
+                        placeholder="削除する"
+                        className="mt-3 w-full rounded-md border border-red-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                        aria-label="アカウント削除確認"
+                      />
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleCancelDeleteAccount}
+                          disabled={deletingAccount}
+                          className="inline-flex cursor-pointer items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          キャンセル
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleDeleteAccount}
+                          disabled={
+                            deletingAccount ||
+                            deleteAccountConfirmText.trim() !== "削除する"
+                          }
+                          className="inline-flex cursor-pointer items-center justify-center rounded-md bg-red-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300 disabled:opacity-60"
+                        >
+                          {deletingAccount
+                            ? "削除中…"
+                            : "アカウントを完全に削除する"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {deleteAccountMsg ? (
+                    <p className="mt-3 text-xs font-medium text-red-700">
+                      {deleteAccountMsg}
+                    </p>
+                  ) : null}
                 </div>
               </div>
             </div>

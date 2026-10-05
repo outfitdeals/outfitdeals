@@ -179,8 +179,8 @@ export default function RightSidebar({
                       likeDisabled
                         ? "inline-flex cursor-default items-center gap-1 text-slate-400"
                         : isLiked
-                          ? "inline-flex cursor-pointer items-center gap-1 text-[#f59e0b]"
-                          : "inline-flex cursor-pointer items-center gap-1 text-slate-500 hover:text-[#f59e0b]"
+                          ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
+                          : "inline-flex cursor-pointer items-center gap-1 text-slate-500 hover:text-[#006888]"
                     }
                     aria-label={isLiked ? "いいねを取り消す" : "いいね"}
                     title={
@@ -202,8 +202,8 @@ export default function RightSidebar({
                     href={`${detailUrl}#comments`}
                     className={
                       d.isCommented
-                        ? "inline-flex cursor-pointer items-center gap-1 text-[#006888] hover:text-[#00546d]"
-                        : "inline-flex cursor-pointer items-center gap-1 text-slate-500 hover:text-[#006888]"
+                        ? "inline-flex cursor-pointer items-center gap-1 text-[#001e43] hover:text-[#001e43]"
+                        : "inline-flex cursor-pointer items-center gap-1 text-slate-500 hover:text-[#001e43]"
                     }
                     title={d.isCommented ? "コメント済み" : "コメントを見る"}
                     aria-label="コメントを見る"
