@@ -1358,6 +1358,88 @@ function cleanRakutenItemCaption(value: string | undefined | null): string | nul
 }
 
 
+
+function getRakutenInternalItemId(
+  html: string,
+  shopCode: string
+): string | null {
+  const escapedShopCode = shopCode.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // Most reliable Rakuten item-page marker:
+  // <input ... id="ratItemId" value="387193/10000148"/>
+  const ratItemIdMatch = html.match(
+    /id=["']ratItemId["'][^>]*value=["']([^"']+)["']/i
+  );
+
+  if (ratItemIdMatch?.[1]) {
+    const value = decodeHtmlEntities(ratItemIdMatch[1]).trim();
+    const slashIndex = value.lastIndexOf("/");
+    const itemId =
+      slashIndex >= 0 ? value.slice(slashIndex + 1).trim() : value;
+
+    if (itemId) return itemId;
+  }
+
+  // Attribute order can be reversed.
+  const ratItemIdReverseMatch = html.match(
+    /value=["']([^"']+)["'][^>]*id=["']ratItemId["']/i
+  );
+
+  if (ratItemIdReverseMatch?.[1]) {
+    const value = decodeHtmlEntities(ratItemIdReverseMatch[1]).trim();
+    const slashIndex = value.lastIndexOf("/");
+    const itemId =
+      slashIndex >= 0 ? value.slice(slashIndex + 1).trim() : value;
+
+    if (itemId) return itemId;
+  }
+
+  // Rakuten's item-page settings also expose the actual item ID.
+  const shopAndItemPattern = new RegExp(
+    `data-shop-id=["']\\d+["'][^>]{0,800}data-item-id=["']([^"']+)["']`,
+    "i"
+  );
+  const settingsMatch = html.match(shopAndItemPattern);
+
+  if (settingsMatch?.[1]?.trim()) {
+    return settingsMatch[1].trim();
+  }
+
+  // Last-resort structured state. Restrict the search to an item object
+  // near the current shop code when possible to avoid related-item IDs.
+  const shopIndex = html.toLowerCase().indexOf(
+    `"shopurl":"${shopCode.toLowerCase()}"`
+  );
+
+  const searchArea =
+    shopIndex >= 0
+      ? html.slice(Math.max(0, shopIndex - 12000), shopIndex + 12000)
+      : html;
+
+  const structuredMatch = searchArea.match(
+    /"itemId"\s*:\s*"?([0-9A-Za-z_-]+)"?/i
+  );
+
+  return structuredMatch?.[1]?.trim() || null;
+}
+
+async function resolveRakutenInternalItemId(
+  rawUrl: string,
+  shopCode: string
+): Promise<string | null> {
+  const canonicalUrl = toCanonicalRakutenItemUrl(rawUrl);
+
+  for (const mobile of [false, true]) {
+    const html = await fetchRakutenProductHtml(canonicalUrl, mobile);
+    if (!html) continue;
+
+    const itemId = getRakutenInternalItemId(html, shopCode);
+    if (itemId) return itemId;
+  }
+
+  return null;
+}
+
 async function fetchRakutenProductHtml(
   canonicalUrl: string,
   mobile = false
@@ -1517,7 +1599,19 @@ async function mergePageTruth(
 
   return {
     ...apiPreview,
+    title: apiPreview.title.trim() || page.title,
+    price:
+      Number.isFinite(apiPreview.price) && apiPreview.price > 0
+        ? apiPreview.price
+        : page.price,
+    shopName: apiPreview.shopName.trim() || page.shopName,
     imageUrl: apiPreview.imageUrl ?? page.imageUrl,
+    freeShipping:
+      apiPreview.freeShipping ?? page.freeShipping,
+    itemDescription:
+      apiPreview.itemDescription?.trim() ||
+      page.itemDescription ||
+      null,
     endTime: apiPreview.endTime ?? page.endTime,
   };
 }
@@ -1748,12 +1842,38 @@ export async function fetchRakutenItemByUrl(
 
   const { shopCode, itemId } = parseRakutenItemUrl(rawUrl);
 
-  // 1. 現行APIの itemCode で完全一致を最優先する。
+  // 1. URL上の itemCode で完全一致を確認する。
   const exactItem = await searchRakutenItemByCode(shopCode, itemId);
+  const exactEndTime = String(exactItem?.endTime ?? "").trim();
 
-  if (exactItem) {
+  // 楽天では URL の商品番号と内部 itemId が異なる商品がある。
+  // exact API が取れない、または期限が無い場合だけ商品ページの
+  // ratItemId / data-item-id から実 itemId を解決し、APIを再検索する。
+  let resolvedItemId = itemId;
+  let resolvedExactItem: RakutenApiItem | null = exactItem;
+
+  if (!exactItem || !exactEndTime) {
+    const internalItemId = await resolveRakutenInternalItemId(
+      rawUrl,
+      shopCode
+    );
+
+    if (internalItemId && internalItemId !== itemId) {
+      const internalExactItem = await searchRakutenItemByCode(
+        shopCode,
+        internalItemId
+      );
+
+      if (internalExactItem) {
+        resolvedItemId = internalItemId;
+        resolvedExactItem = internalExactItem;
+      }
+    }
+  }
+
+  if (resolvedExactItem) {
     const apiPreview = await rakutenApiItemToPreview(
-      exactItem,
+      resolvedExactItem,
       rawUrl,
       shopCode,
       true
@@ -1762,8 +1882,9 @@ export async function fetchRakutenItemByUrl(
     return mergePageTruth(apiPreview, rawUrl, shopCode);
   }
 
-  // 2. 元の安定版と同じ itemId keyword fallback。
-  const keywords = buildKeywordCandidates(itemId);
+  // 2. 元の安定版と同じ keyword fallback。
+  // 内部 itemId を解決できた場合は、URL上の別名IDではなく実IDを使う。
+  const keywords = buildKeywordCandidates(resolvedItemId);
   let allCandidates: RakutenApiItem[] = [];
 
   for (const keyword of keywords) {
@@ -1779,7 +1900,7 @@ export async function fetchRakutenItemByUrl(
     const chosen = chooseBestRakutenItem(
       allCandidates,
       shopCode,
-      itemId
+      resolvedItemId
     );
 
     if (chosen) {
@@ -1824,14 +1945,25 @@ export async function fetchRakutenItemByUrl(
       continue;
     }
 
-    const chosen = chooseBestRakutenItem(items, shopCode, itemId);
+    const chosen = chooseBestRakutenItem(
+      items,
+      shopCode,
+      resolvedItemId
+    );
 
     if (!chosen) continue;
+
+    const chosenItemCode = String(chosen.itemCode ?? "").trim();
+    const chosenParsedCode = parseRakutenItemCode(chosenItemCode);
+    const isExactResolvedItem =
+      chosenParsedCode?.shopCode === shopCode &&
+      chosenParsedCode?.itemId === resolvedItemId;
 
     const apiPreview = await rakutenApiItemToPreview(
       chosen,
       rawUrl,
-      shopCode
+      shopCode,
+      isExactResolvedItem
     );
 
     return {
@@ -1839,6 +1971,7 @@ export async function fetchRakutenItemByUrl(
       imageUrl: apiPreview.imageUrl ?? pagePreview.imageUrl,
       freeShipping:
         apiPreview.freeShipping ?? pagePreview.freeShipping,
+      endTime: apiPreview.endTime ?? pagePreview.endTime,
     };
   }
 
