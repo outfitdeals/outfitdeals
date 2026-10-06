@@ -2,10 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import {
   fetchCurrentRakutenSaleRankingItems,
-  fetchRakutenGenrePath,
   type RakutenSaleRankingItem,
-  type RakutenGenreNode,
 } from "@/lib/rakuten";
+import {
+  resolveRakutenDealCategory,
+  type DealCategory,
+} from "@/lib/rakutenCategory";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,18 +28,6 @@ const RANKING_TARGETS = [
   { key: "interior", name: "インテリア・寝具・収納", genreId: 100804 },
   { key: "shoes", name: "靴", genreId: 558885 },
 ] as const;
-
-type DealCategory =
-  | "fashion_women"
-  | "fashion_men"
-  | "beauty"
-  | "home"
-  | "electronics"
-  | "food"
-  | "sports"
-  | "interior"
-  | "shoes"
-  | "other";
 
 type RankedSaleItem = RakutenSaleRankingItem & {
   rankingSources: Array<{
@@ -98,102 +88,6 @@ function rakutenJapanTimeToIso(value: string): string {
   }
 
   return date.toISOString();
-}
-
-const RAKUTEN_GENRE_CATEGORY_MAP: Partial<Record<number, DealCategory>> = {
-  // Fashion
-  100371: "fashion_women",
-  551177: "fashion_men",
-  558885: "shoes",
-
-  // Food & drinks
-  100227: "food",
-  551167: "food",
-  100316: "food",
-  510915: "food",
-  510901: "food",
-
-  // Electronics
-  562637: "electronics",
-  211742: "electronics",
-  100026: "electronics",
-  564500: "electronics",
-
-  // Beauty
-  100939: "beauty",
-
-  // Sports
-  101070: "sports",
-
-  // Interior / daily goods
-  100804: "interior",
-  215783: "home",
-  558944: "home",
-
-  // Tokumikke has no separate baby category.
-  100533: "home",
-};
-
-const RANKING_SOURCE_CATEGORY_MAP: Partial<Record<string, DealCategory>> = {
-  ladies: "fashion_women",
-  mens: "fashion_men",
-  food: "food",
-  appliances: "electronics",
-  beauty: "beauty",
-  daily: "home",
-  sports: "sports",
-  interior: "interior",
-  shoes: "shoes",
-};
-
-const genrePathCache = new Map<number, RakutenGenreNode[]>();
-
-async function getGenrePathCached(genreId: number): Promise<RakutenGenreNode[]> {
-  const cached = genrePathCache.get(genreId);
-  if (cached) return cached;
-
-  const path = await fetchRakutenGenrePath(genreId);
-  genrePathCache.set(genreId, path);
-  return path;
-}
-
-async function resolveCategory(item: RankedSaleItem): Promise<DealCategory> {
-  // No keyword classification.
-  // The product's Rakuten genre tree is the primary source of truth.
-  if (item.genreId != null) {
-    try {
-      const genrePath = await getGenrePathCached(item.genreId);
-
-      for (const node of genrePath) {
-        const mapped = RAKUTEN_GENRE_CATEGORY_MAP[node.genreId];
-        if (mapped) return mapped;
-      }
-
-      const directMapped = RAKUTEN_GENRE_CATEGORY_MAP[item.genreId];
-      if (directMapped) return directMapped;
-    } catch (error) {
-      console.warn(
-        "[rakuten-auto-post] genre classification lookup failed:",
-        item.genreId,
-        error
-      );
-    }
-  }
-
-  // Fallback only to the structured ranking source.
-  // Product title/description/shop/URL are intentionally not inspected.
-  const bestCategorySource = item.rankingSources
-    .filter(
-      (source) =>
-        source.key !== "overall" && RANKING_SOURCE_CATEGORY_MAP[source.key]
-    )
-    .sort((a, b) => a.rank - b.rank)[0];
-
-  if (bestCategorySource) {
-    return RANKING_SOURCE_CATEGORY_MAP[bestCategorySource.key] ?? "other";
-  }
-
-  return "other";
 }
 
 async function generateAiComment(item: RankedSaleItem): Promise<string> {
@@ -412,7 +306,7 @@ export async function GET(request: NextRequest) {
           break;
         }
 
-        const category = await resolveCategory(item);
+        const category = await resolveRakutenDealCategory(item.genreId, item.rankingSources);
 
         const { data: latestSameProductDeal, error: dealNumberError } = await admin
           .from("deals")

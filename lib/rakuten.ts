@@ -59,6 +59,7 @@ type ParsedRakutenUrl = {
 };
 type RakutenApiItem = {
   itemCode?: string;
+  genreId?: number | string;
   itemName?: string;
   itemPrice?: number | string;
   itemUrl?: string;
@@ -1840,6 +1841,19 @@ export async function fetchCurrentRakutenSaleRankingItems(params?: {
   }
 
   return saleItems.sort((a, b) => a.rank - b.rank);
+}
+
+export async function fetchRakutenItemGenreId(
+  shopCode: string,
+  itemId: string
+): Promise<number | null> {
+  const item = await searchRakutenItemByCode(shopCode, itemId);
+  if (!item) return null;
+
+  const rawGenreId = Number(item.genreId);
+  return Number.isInteger(rawGenreId) && rawGenreId > 0
+    ? rawGenreId
+    : null;
 }
 
 export async function fetchRakutenGenrePath(
