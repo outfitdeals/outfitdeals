@@ -3,6 +3,7 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 import SiteHeader from "./components/SiteHeader";
@@ -64,6 +65,19 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteStructuredData) }}
         />
+
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-3QPV34K0W3"
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-3QPV34K0W3');
+          `}
+        </Script>
 
         <Suspense fallback={null}>
           <SiteHeader />
