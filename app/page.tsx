@@ -1464,7 +1464,11 @@ function PageContent() {
   const [sidePopular, setSidePopular] = useState<DealsRow[]>([]);
   const [sideTrending, setSideTrending] = useState<DealsRow[]>([]);
   const [sideEndingSoon, setSideEndingSoon] = useState<DealsRow[]>([]);
-  const [topDealsPage, setTopDealsPage] = useState<number>(1);
+  const initialTopDealsPage = Math.max(
+    1,
+    Number.parseInt(searchParams.get("page") ?? "1", 10) || 1
+  );
+  const [topDealsPage, setTopDealsPage] = useState<number>(initialTopDealsPage);
   const [topDealsBatch, setTopDealsBatch] = useState(1);
   const [likingId, setLikingId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -1498,6 +1502,8 @@ function PageContent() {
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
   const [freeShippingOnly, setFreeShippingOnly] = useState(false);
   const [hideExpired, setHideExpired] = useState(false);
+  const previousTopDealsCategoryRef = useRef<CategoryFilter>(activeCategory);
+  const previousTopDealsQueryRef = useRef(q);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1712,13 +1718,6 @@ function PageContent() {
       cancelled = true;
       subscription.unsubscribe();
     };
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const p = Number(params.get("page") ?? "1");
-    setTopDealsPage(Number.isInteger(p) && p > 0 ? p : 1);
   }, []);
 
   const attachAuthorUsername = useCallback(async (rows: any[]) => {
@@ -2912,6 +2911,15 @@ function PageContent() {
   }, [recommendTotalPages]);
 
   useEffect(() => {
+    const categoryChanged =
+      previousTopDealsCategoryRef.current !== activeCategory;
+    const queryChanged = previousTopDealsQueryRef.current !== q;
+
+    previousTopDealsCategoryRef.current = activeCategory;
+    previousTopDealsQueryRef.current = q;
+
+    if (!categoryChanged && !queryChanged) return;
+
     setCurrentPage(0);
     setTopDealsPage(1);
     setTopDealsBatch(1);

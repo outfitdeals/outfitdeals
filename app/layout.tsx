@@ -24,13 +24,23 @@ const websiteStructuredData = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://www.tokumikke.com"),
   applicationName: "トクミッケ",
   title: { default: siteTitle, template: "%s｜トクミッケ" },
   description: siteDescription,
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     type: "website",
     locale: "ja_JP",
     siteName: "トクミッケ",
+    title: siteTitle,
+    description: siteDescription,
+    url: "/",
+  },
+  twitter: {
+    card: "summary",
     title: siteTitle,
     description: siteDescription,
   },
