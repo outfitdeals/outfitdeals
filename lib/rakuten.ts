@@ -30,6 +30,7 @@ export type RakutenItemPreview = {
 export type RakutenSaleRankingItem = {
   rank: number;
   itemCode: string;
+  genreId: number | null;
   title: string;
   price: number;
   imageUrl: string | null;
@@ -42,6 +43,12 @@ export type RakutenSaleRankingItem = {
   itemDescription: string | null;
   startTime: string;
   endTime: string;
+};
+
+export type RakutenGenreNode = {
+  genreId: number;
+  jaName: string;
+  level: number;
 };
 
 type ParsedRakutenUrl = {
@@ -65,6 +72,7 @@ type RakutenApiItem = {
 type RakutenRankingApiItem = RakutenApiItem & {
   rank?: number | string;
   itemCode?: string;
+  genreId?: number | string;
   affiliateUrl?: string;
   availability?: number | string;
   startTime?: string;
@@ -1807,9 +1815,14 @@ export async function fetchCurrentRakutenSaleRankingItems(params?: {
         getRakutenImageUrl(item.mediumImageUrls?.[0]) ??
         getRakutenImageUrl(item.smallImageUrls?.[0]);
 
+      const rawGenreId = Number(item.genreId);
+      const genreId =
+        Number.isInteger(rawGenreId) && rawGenreId > 0 ? rawGenreId : null;
+
       saleItems.push({
         rank,
         itemCode,
+        genreId,
         title: String(item.itemName ?? ""),
         price: Number(item.itemPrice) || 0,
         imageUrl: createRakutenAffiliateImageUrl(rawImageUrl),
@@ -1827,6 +1840,68 @@ export async function fetchCurrentRakutenSaleRankingItems(params?: {
   }
 
   return saleItems.sort((a, b) => a.rank - b.rank);
+}
+
+export async function fetchRakutenGenrePath(
+  genreId: number
+): Promise<RakutenGenreNode[]> {
+  if (!RAKUTEN_APP_ID) {
+    throw new Error("RAKUTEN_APP_ID が設定されていません。");
+  }
+
+  if (!RAKUTEN_ACCESS_KEY) {
+    throw new Error("RAKUTEN_ACCESS_KEY が設定されていません。");
+  }
+
+  if (!Number.isInteger(genreId) || genreId <= 0) {
+    return [];
+  }
+
+  const apiUrl = new URL(
+    "https://openapi.rakuten.co.jp/ichibagt/api/IchibaGenre/Search/20260701"
+  );
+
+  apiUrl.searchParams.set("applicationId", RAKUTEN_APP_ID);
+  apiUrl.searchParams.set("accessKey", RAKUTEN_ACCESS_KEY);
+  apiUrl.searchParams.set("format", "json");
+  apiUrl.searchParams.set("formatVersion", "2");
+  apiUrl.searchParams.set("genreId", String(genreId));
+
+  const response = await fetchWithTimeoutAndRetry(apiUrl.toString());
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      `楽天ジャンルAPIの取得に失敗しました (${response.status}): ${responseText}`
+    );
+  }
+
+  const data = JSON.parse(responseText);
+  const nodes: RakutenGenreNode[] = [];
+
+  const addNode = (value: any) => {
+    const id = Number(value?.genreId);
+    const level = Number(value?.level);
+
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (!Number.isInteger(level) || level < 0) return;
+
+    nodes.push({
+      genreId: id,
+      jaName: String(value?.jaName ?? value?.nameJa ?? ""),
+      level,
+    });
+  };
+
+  if (Array.isArray(data?.ancestors)) {
+    for (const ancestor of data.ancestors) addNode(ancestor);
+  }
+
+  addNode(data?.genre);
+
+  return Array.from(
+    new Map(nodes.map((node) => [node.genreId, node])).values()
+  ).sort((a, b) => a.level - b.level);
 }
 
 export async function fetchRakutenItemByUrl(

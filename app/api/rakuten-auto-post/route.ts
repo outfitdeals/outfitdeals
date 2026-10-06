@@ -2,7 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import {
   fetchCurrentRakutenSaleRankingItems,
+  fetchRakutenGenrePath,
   type RakutenSaleRankingItem,
+  type RakutenGenreNode,
 } from "@/lib/rakuten";
 
 export const dynamic = "force-dynamic";
@@ -98,66 +100,97 @@ function rakutenJapanTimeToIso(value: string): string {
   return date.toISOString();
 }
 
-function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, "");
+const RAKUTEN_GENRE_CATEGORY_MAP: Partial<Record<number, DealCategory>> = {
+  // Fashion
+  100371: "fashion_women",
+  551177: "fashion_men",
+  558885: "shoes",
+
+  // Food & drinks
+  100227: "food",
+  551167: "food",
+  100316: "food",
+  510915: "food",
+  510901: "food",
+
+  // Electronics
+  562637: "electronics",
+  211742: "electronics",
+  100026: "electronics",
+  564500: "electronics",
+
+  // Beauty
+  100939: "beauty",
+
+  // Sports
+  101070: "sports",
+
+  // Interior / daily goods
+  100804: "interior",
+  215783: "home",
+  558944: "home",
+
+  // Tokumikke has no separate baby category.
+  100533: "home",
+};
+
+const RANKING_SOURCE_CATEGORY_MAP: Partial<Record<string, DealCategory>> = {
+  ladies: "fashion_women",
+  mens: "fashion_men",
+  food: "food",
+  appliances: "electronics",
+  beauty: "beauty",
+  daily: "home",
+  sports: "sports",
+  interior: "interior",
+  shoes: "shoes",
+};
+
+const genrePathCache = new Map<number, RakutenGenreNode[]>();
+
+async function getGenrePathCached(genreId: number): Promise<RakutenGenreNode[]> {
+  const cached = genrePathCache.get(genreId);
+  if (cached) return cached;
+
+  const path = await fetchRakutenGenrePath(genreId);
+  genrePathCache.set(genreId, path);
+  return path;
 }
 
-function inferCategory(item: RankedSaleItem): DealCategory {
-  const merged = normalizeText(
-    `${item.title ?? ""} ${item.itemDescription ?? ""} ${item.shopName ?? ""} ${item.itemUrl ?? ""}`
-  );
-  const hasAny = (words: string[]) => words.some((word) => merged.includes(word));
+async function resolveCategory(item: RankedSaleItem): Promise<DealCategory> {
+  // No keyword classification.
+  // The product's Rakuten genre tree is the primary source of truth.
+  if (item.genreId != null) {
+    try {
+      const genrePath = await getGenrePathCached(item.genreId);
 
-  // 商品名・商品説明から明確に判定できる場合は、ランキング元より優先する。
-  // 同じ商品が複数ジャンルのランキングに出た場合でも、
-  // "mens" などの source が先に見つかっただけで誤分類しない。
-  if (hasAny([
-    "お菓子", "菓子", "スイーツ", "デザート", "チョコ", "クッキー", "ビスケット", "せんべい", "煎餅", "おかき", "あられ", "キャンディ", "飴", "グミ", "アイス", "ケーキ", "プリン", "ゼリー", "和菓子", "洋菓子", "饅頭", "まんじゅう", "羊羹", "ようかん",
-    "食品", "グルメ", "おせち", "惣菜", "レトルト", "カレー", "ラーメン", "うどん", "そば", "パスタ", "パン", "牛肉", "豚肉", "鶏肉", "海鮮", "刺身", "鮭", "魚", "野菜", "果物", "フルーツ", "国産米", "お米", "白米", "玄米", "無洗米", "雑穀米",
-    "飲料", "ドリンク", "ジュース", "コーヒー", "紅茶", "お茶", "ミネラルウォーター", "炭酸水",
-    "ワイン", "赤ワイン", "白ワイン", "ロゼ", "スパークリング", "シャンパン", "ビール", "日本酒", "焼酎", "ウイスキー", "ウィスキー", "ブランデー", "リキュール", "酒"
-  ])) return "food";
+      for (const node of genrePath) {
+        const mapped = RAKUTEN_GENRE_CATEGORY_MAP[node.genreId];
+        if (mapped) return mapped;
+      }
 
-  if (hasAny([
-    "iphone", "ipad", "applewatch", "airpods", "macbook", "パソコン", "モニター", "イヤホン", "ヘッドホン", "スマホ", "タブレット", "カメラ", "テレビ", "冷蔵庫", "洗濯機", "掃除機", "ドライヤー", "炊飯器", "電子レンジ", "エアコン", "空気清浄機", "加湿器", "家電"
-  ])) return "electronics";
+      const directMapped = RAKUTEN_GENRE_CATEGORY_MAP[item.genreId];
+      if (directMapped) return directMapped;
+    } catch (error) {
+      console.warn(
+        "[rakuten-auto-post] genre classification lookup failed:",
+        item.genreId,
+        error
+      );
+    }
+  }
 
-  if (hasAny([
-    "化粧水", "乳液", "美容液", "コスメ", "メイク", "ファンデ", "リップ", "マスカラ", "アイシャドウ", "クレンジング", "シャンプー", "トリートメント", "香水", "美容", "スキンケア", "フェイスマスク", "日焼け止め"
-  ])) return "beauty";
-
-  if (hasAny(["スニーカー", "シューズ", "靴", "ブーツ", "サンダル", "ローファー", "パンプス", "スリッポン", "革靴"])) return "shoes";
-
-  if (hasAny(["スポーツ", "アウトドア", "キャンプ", "テント", "寝袋", "ゴルフ", "ランニング", "トレーニング", "フィットネス", "ヨガ", "サッカー", "野球", "テニス", "釣り", "登山"])) return "sports";
-
-  if (hasAny(["インテリア", "家具", "ソファ", "ベッド", "マットレス", "テーブル", "デスク", "チェア", "椅子", "本棚", "テレビ台", "カーテン", "ラグ", "カーペット", "照明", "収納家具"])) return "interior";
-
-  if (hasAny(["収納", "キッチン", "食器", "フライパン", "鍋", "タオル", "寝具", "布団", "枕", "洗剤", "日用品", "水筒", "タンブラー", "文房具", "掃除用品", "ティッシュ", "トイレットペーパー"])) return "home";
-
-  if (hasAny(["レディース", "婦人", "women", "ladies", "スカート", "ワンピース", "ブラウス", "レディースファッション"])) return "fashion_women";
-
-  if (hasAny(["メンズ", "紳士", "mens", "tシャツ", "スウェット", "パーカー", "スラックス", "ジャケット", "メンズファッション"])) return "fashion_men";
-
-  // 商品内容だけでは判断できない場合は、楽天ランキングの実ジャンルを使う。
-  // 複数ジャンルに載っている場合は、固定順ではなく最も順位が高いジャンルを採用する。
-  const sourceCategoryMap: Partial<Record<string, DealCategory>> = {
-    ladies: "fashion_women",
-    mens: "fashion_men",
-    food: "food",
-    appliances: "electronics",
-    beauty: "beauty",
-    daily: "home",
-    sports: "sports",
-    interior: "interior",
-    shoes: "shoes",
-  };
-
+  // Fallback only to the structured ranking source.
+  // Product title/description/shop/URL are intentionally not inspected.
   const bestCategorySource = item.rankingSources
-    .filter((source) => source.key !== "overall" && sourceCategoryMap[source.key])
+    .filter(
+      (source) =>
+        source.key !== "overall" && RANKING_SOURCE_CATEGORY_MAP[source.key]
+    )
     .sort((a, b) => a.rank - b.rank)[0];
 
   if (bestCategorySource) {
-    return sourceCategoryMap[bestCategorySource.key] ?? "other";
+    return RANKING_SOURCE_CATEGORY_MAP[bestCategorySource.key] ?? "other";
   }
 
   return "other";
@@ -379,7 +412,7 @@ export async function GET(request: NextRequest) {
           break;
         }
 
-        const category = inferCategory(item);
+        const category = await resolveCategory(item);
 
         const { data: latestSameProductDeal, error: dealNumberError } = await admin
           .from("deals")
