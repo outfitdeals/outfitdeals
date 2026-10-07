@@ -152,6 +152,13 @@ async function generateAiComment(item: RankedSaleItem): Promise<string> {
   return comment;
 }
 
+function getInvocationSource(request: NextRequest): string {
+  const userAgent = request.headers.get("user-agent") ?? "";
+  return userAgent.toLowerCase().includes("vercel-cron")
+    ? "vercel_cron"
+    : "manual_or_other";
+}
+
 export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json(
@@ -162,6 +169,9 @@ export async function GET(request: NextRequest) {
 
   const startedAt = Date.now();
   const SAFE_EXECUTION_MS = 240_000;
+  const invocationSource = getInvocationSource(request);
+  let runId: string | null = null;
+  let adminForRunLog: any = null;
 
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -187,6 +197,24 @@ export async function GET(request: NextRequest) {
         detectSessionInUrl: false,
       },
     });
+    adminForRunLog = admin;
+
+    const { data: runRow, error: runInsertError } = await admin
+      .from("cron_job_runs")
+      .insert({
+        job_name: "rakuten-auto-post",
+        invocation_source: invocationSource,
+        started_at: new Date(startedAt).toISOString(),
+        status: "running",
+      })
+      .select("id")
+      .single();
+
+    if (runInsertError) {
+      console.error("[rakuten-auto-post] run log insert failed:", runInsertError);
+    } else {
+      runId = String(runRow.id);
+    }
 
     const deduped = new Map<string, RankedSaleItem>();
 
@@ -493,6 +521,34 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (runId) {
+      const runStatus =
+        postFailureCount > 0 || aiFailureCount > 0 || stoppedForTime
+          ? "partial"
+          : "success";
+
+      const { error: runUpdateError } = await admin
+        .from("cron_job_runs")
+        .update({
+          finished_at: new Date().toISOString(),
+          status: runStatus,
+          candidate_count: candidates.length,
+          posted_count: postedCount,
+          duplicate_count: duplicateCount,
+          ai_failure_count: aiFailureCount,
+          post_failure_count: postFailureCount,
+          stopped_for_time: stoppedForTime,
+          elapsed_ms: Date.now() - startedAt,
+          created_deals: createdDeals,
+          error_message: null,
+        })
+        .eq("id", runId);
+
+      if (runUpdateError) {
+        console.error("[rakuten-auto-post] run log update failed:", runUpdateError);
+      }
+    }
+
     return NextResponse.json(
       {
         ok: true,
@@ -519,6 +575,24 @@ export async function GET(request: NextRequest) {
     );
   } catch (error: any) {
     console.error("[rakuten-auto-post] error:", error);
+
+    if (runId && adminForRunLog) {
+      const { error: runUpdateError } = await adminForRunLog
+        .from("cron_job_runs")
+        .update({
+          finished_at: new Date().toISOString(),
+          status: "failed",
+          elapsed_ms: Date.now() - startedAt,
+          error_message:
+            String(error?.message ?? "").trim() ||
+            "楽天ディールの自動投稿に失敗しました。",
+        })
+        .eq("id", runId);
+
+      if (runUpdateError) {
+        console.error("[rakuten-auto-post] failed run log update failed:", runUpdateError);
+      }
+    }
 
     return NextResponse.json(
       {
