@@ -1830,29 +1830,106 @@ function PageContent() {
       if (rows.length === 0) return rows;
 
       const ids = Array.from(new Set(rows.map((r) => r.id)));
+      const BATCH_SIZE = 100;
 
-      const likesPromise = supabase
-        .from("deal_likes")
-        .select("deal_id, user_id")
-        .in("deal_id", ids);
+      const chunk = <T,>(values: T[]) => {
+        const batches: T[][] = [];
+        for (let index = 0; index < values.length; index += BATCH_SIZE) {
+          batches.push(values.slice(index, index + BATCH_SIZE));
+        }
+        return batches;
+      };
 
-      const dislikesPromise = supabase
-        .from("deal_dislikes")
-        .select("deal_id, user_id")
-        .in("deal_id", ids);
+      const idBatches = chunk(ids);
 
-      const savesPromise = userId
-        ? supabase
+      const loadLikes = async () => {
+        const result: any[] = [];
+        let firstError: any = null;
+
+        for (const batch of idBatches) {
+          const { data, error } = await supabase
+            .from("deal_likes")
+            .select("deal_id, user_id")
+            .in("deal_id", batch);
+
+          if (error) {
+            firstError ??= error;
+            continue;
+          }
+
+          result.push(...(data ?? []));
+        }
+
+        return { data: result, error: firstError };
+      };
+
+      const loadDislikes = async () => {
+        const result: any[] = [];
+        let firstError: any = null;
+
+        for (const batch of idBatches) {
+          const { data, error } = await supabase
+            .from("deal_dislikes")
+            .select("deal_id, user_id")
+            .in("deal_id", batch);
+
+          if (error) {
+            firstError ??= error;
+            continue;
+          }
+
+          result.push(...(data ?? []));
+        }
+
+        return { data: result, error: firstError };
+      };
+
+      const loadSaves = async () => {
+        if (!userId) {
+          return { data: [] as any[], error: null as any };
+        }
+
+        const result: any[] = [];
+        let firstError: any = null;
+
+        for (const batch of idBatches) {
+          const { data, error } = await supabase
             .from("deal_saves")
             .select("deal_id")
             .eq("user_id", userId)
-            .in("deal_id", ids)
-        : Promise.resolve({ data: [], error: null } as any);
+            .in("deal_id", batch);
 
-      const commentsPromise = supabase
-        .from("deal_comments")
-        .select("id, deal_id, user_id")
-        .in("deal_id", ids);
+          if (error) {
+            firstError ??= error;
+            continue;
+          }
+
+          result.push(...(data ?? []));
+        }
+
+        return { data: result, error: firstError };
+      };
+
+      const loadComments = async () => {
+        const result: any[] = [];
+        let firstError: any = null;
+
+        for (const batch of idBatches) {
+          const { data, error } = await supabase
+            .from("deal_comments")
+            .select("id, deal_id, user_id")
+            .in("deal_id", batch);
+
+          if (error) {
+            firstError ??= error;
+            continue;
+          }
+
+          result.push(...(data ?? []));
+        }
+
+        return { data: result, error: firstError };
+      };
 
       const [
         { data: likeRows, error: likesError },
@@ -1860,18 +1937,24 @@ function PageContent() {
         { data: saveRows, error: saveError },
         { data: commentRows, error: commentsError },
       ] = await Promise.all([
-        likesPromise,
-        dislikesPromise,
-        savesPromise,
-        commentsPromise,
+        loadLikes(),
+        loadDislikes(),
+        loadSaves(),
+        loadComments(),
       ]);
 
       if (likesError) {
-        console.error("attachInteractionFlags likes error:", likesError);
+        console.warn(
+          "attachInteractionFlags likes warn after batched load:",
+          likesError
+        );
       }
 
       if (dislikesError) {
-        console.error("attachInteractionFlags dislikes error:", dislikesError);
+        console.warn(
+          "attachInteractionFlags dislikes warn after batched load:",
+          dislikesError
+        );
       }
 
       if (saveError) {
@@ -1893,76 +1976,82 @@ function PageContent() {
       (likeRows ?? []).forEach((r: any) => {
         const dealId = String(r.deal_id);
         likeCountMap.set(dealId, (likeCountMap.get(dealId) ?? 0) + 1);
-        if (userId && r.user_id === userId) likedSet.add(dealId);
+
+        if (userId && r.user_id === userId) {
+          likedSet.add(dealId);
+        }
       });
 
       (dislikeRows ?? []).forEach((r: any) => {
         const dealId = String(r.deal_id);
         dislikeCountMap.set(dealId, (dislikeCountMap.get(dealId) ?? 0) + 1);
-        if (userId && r.user_id === userId) dislikedSet.add(dealId);
+
+        if (userId && r.user_id === userId) {
+          dislikedSet.add(dealId);
+        }
       });
 
       const savedSet = new Set(
         (saveRows ?? []).map((r: any) => String(r.deal_id))
       );
 
-      const commentCountMap = new Map<string, number>();
       const commentToDealMap = new Map<string, string>();
       const commentedSet = new Set<string>();
-
-      if (userId) {
-        const { data: ownCommentRows, error: ownCommentsError } = await supabase
-          .from("deal_comments")
-          .select("deal_id")
-          .eq("user_id", userId)
-          .in("deal_id", ids);
-
-        if (ownCommentsError) {
-          console.warn("attachInteractionFlags own comments warn:", ownCommentsError);
-        } else {
-          (ownCommentRows ?? []).forEach((r: any) => {
-            commentedSet.add(String(r.deal_id));
-          });
-        }
-      }
 
       (commentRows ?? []).forEach((r: any) => {
         const dealId = String(r.deal_id);
         const commentId = String(r.id);
 
         commentToDealMap.set(commentId, dealId);
-        commentCountMap.set(
-          dealId,
-          (commentCountMap.get(dealId) ?? 0) + 1
-        );
 
         if (userId && r.user_id === userId) {
           commentedSet.add(dealId);
         }
       });
 
+      if (userId) {
+        for (const batch of idBatches) {
+          const { data: ownCommentRows, error: ownCommentsError } =
+            await supabase
+              .from("deal_comments")
+              .select("deal_id")
+              .eq("user_id", userId)
+              .in("deal_id", batch);
+
+          if (ownCommentsError) {
+            console.warn(
+              "attachInteractionFlags own comments warn:",
+              ownCommentsError
+            );
+            continue;
+          }
+
+          (ownCommentRows ?? []).forEach((r: any) => {
+            commentedSet.add(String(r.deal_id));
+          });
+        }
+      }
+
       if (!commentsError && commentToDealMap.size > 0) {
         const commentIds = Array.from(commentToDealMap.keys());
 
-        const { data: replyRows, error: repliesError } = await supabase
-          .from("deal_comment_replies")
-          .select("comment_id, user_id")
-          .in("comment_id", commentIds);
+        for (const batch of chunk(commentIds)) {
+          const { data: replyRows, error: repliesError } = await supabase
+            .from("deal_comment_replies")
+            .select("comment_id, user_id")
+            .in("comment_id", batch);
 
-        if (repliesError) {
-          console.warn(
-            "attachInteractionFlags replies warn:",
-            repliesError
-          );
-        } else {
+          if (repliesError) {
+            console.warn(
+              "attachInteractionFlags replies warn:",
+              repliesError
+            );
+            continue;
+          }
+
           (replyRows ?? []).forEach((r: any) => {
             const dealId = commentToDealMap.get(String(r.comment_id));
             if (!dealId) return;
-
-            commentCountMap.set(
-              dealId,
-              (commentCountMap.get(dealId) ?? 0) + 1
-            );
 
             if (userId && r.user_id === userId) {
               commentedSet.add(dealId);
@@ -1971,26 +2060,25 @@ function PageContent() {
         }
       }
 
-      return rows.map((r) => {
-        return {
-          ...r,
-          likes_count: likesError
-            ? Number(r.likes_count ?? 0)
-            : likeCountMap.get(r.id) ?? 0,
-          dislikes_count: dislikesError
-            ? Number(r.dislikes_count ?? 0)
-            : dislikeCountMap.get(r.id) ?? 0,
-          comments_count: Number(r.comments_count ?? 0),
-          has_commented: userId ? commentedSet.has(r.id) : false,
-          has_liked: Boolean(userId) && !likesError && likedSet.has(r.id),
-          has_disliked: Boolean(userId) && !dislikesError && dislikedSet.has(r.id),
-          has_saved: userId
-            ? saveError
-              ? r.has_saved
-              : savedSet.has(r.id)
-            : false,
-        };
-      });
+      return rows.map((r) => ({
+        ...r,
+        likes_count: likesError
+          ? Number(r.likes_count ?? 0)
+          : likeCountMap.get(r.id) ?? 0,
+        dislikes_count: dislikesError
+          ? Number(r.dislikes_count ?? 0)
+          : dislikeCountMap.get(r.id) ?? 0,
+        comments_count: Number(r.comments_count ?? 0),
+        has_commented: userId ? commentedSet.has(r.id) : false,
+        has_liked: Boolean(userId) && !likesError && likedSet.has(r.id),
+        has_disliked:
+          Boolean(userId) && !dislikesError && dislikedSet.has(r.id),
+        has_saved: userId
+          ? saveError
+            ? r.has_saved
+            : savedSet.has(r.id)
+          : false,
+      }));
     },
     []
   );

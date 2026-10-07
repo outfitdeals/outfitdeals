@@ -20,6 +20,7 @@ type DashboardStats = {
   comments: number;
   replies: number;
   pendingReports: number;
+  pendingDealReports: number;
   views: number;
 };
 
@@ -29,6 +30,7 @@ const EMPTY_STATS: DashboardStats = {
   comments: 0,
   replies: 0,
   pendingReports: 0,
+  pendingDealReports: 0,
   views: 0,
 };
 
@@ -50,6 +52,7 @@ export default function AdminPage() {
         commentsResult,
         repliesResult,
         reportsResult,
+        dealReportsResult,
         viewsResult,
       ] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }),
@@ -65,6 +68,10 @@ export default function AdminPage() {
           .select("id", { count: "exact", head: true })
           .eq("status", "pending"),
         supabase
+          .from("deal_reports")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending"),
+        supabase
           .from("deal_views")
           .select("id", { count: "exact", head: true }),
       ]);
@@ -77,6 +84,7 @@ export default function AdminPage() {
         commentsResult,
         repliesResult,
         reportsResult,
+        dealReportsResult,
         viewsResult,
       ];
 
@@ -95,6 +103,7 @@ export default function AdminPage() {
         comments: commentsResult.count ?? 0,
         replies: repliesResult.count ?? 0,
         pendingReports: reportsResult.count ?? 0,
+        pendingDealReports: dealReportsResult.count ?? 0,
         views: viewsResult.count ?? 0,
       });
 
@@ -142,10 +151,11 @@ export default function AdminPage() {
         />
         <StatCard
           label="未対応通報"
-          value={stats.pendingReports}
+          value={stats.pendingReports + stats.pendingDealReports}
           loading={loadingStats}
           icon={<AlertTriangle className="h-5 w-5" />}
-          emphasis={stats.pendingReports > 0}
+          note={`コメント ${stats.pendingReports.toLocaleString("ja-JP")} / 商品 ${stats.pendingDealReports.toLocaleString("ja-JP")}`}
+          emphasis={stats.pendingReports + stats.pendingDealReports > 0}
         />
         <StatCard label="総閲覧" value={stats.views} loading={loadingStats} icon={<BarChart3 className="h-5 w-5" />} />
       </div>
@@ -175,14 +185,25 @@ export default function AdminPage() {
           <div className="divide-y divide-slate-100">
             <DashboardLink
               href="/admin/reports"
-              title="通報管理"
+              title="コメント通報"
               description={
                 stats.pendingReports > 0
-                  ? `未対応の通報が ${stats.pendingReports.toLocaleString("ja-JP")} 件あります`
-                  : "現在、未対応の通報はありません"
+                  ? `未対応のコメント通報が ${stats.pendingReports.toLocaleString("ja-JP")} 件あります`
+                  : "現在、未対応のコメント通報はありません"
               }
               icon={<AlertTriangle className="h-5 w-5" />}
               emphasis={stats.pendingReports > 0}
+            />
+            <DashboardLink
+              href="/admin/deal-reports"
+              title="商品通報"
+              description={
+                stats.pendingDealReports > 0
+                  ? `未対応の商品通報が ${stats.pendingDealReports.toLocaleString("ja-JP")} 件あります`
+                  : "現在、未対応の商品通報はありません"
+              }
+              icon={<AlertTriangle className="h-5 w-5" />}
+              emphasis={stats.pendingDealReports > 0}
             />
             <DashboardLink href="/admin/audit-logs" title="管理操作履歴" description="運営による変更・対応履歴を確認" icon={<History className="h-5 w-5" />} />
           </div>
