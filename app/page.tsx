@@ -2122,20 +2122,77 @@ function PageContent() {
         return;
       }
 
-      let normalized = await attachAuthorUsername(dealsData ?? []);
-      normalized = await attachInteractionFlags(normalized, userId);
+      const baseRows = (dealsData ?? []).map((row: any) => ({
+        id: String(row.id),
+        public_id: row.public_id != null ? Number(row.public_id) : null,
+        shop_id: row.shop_id ?? null,
+        item_id: row.item_id ?? null,
+        created_at: row.created_at,
+        user_id: row.user_id,
+        title: row.title,
+        price: row.price,
+        orig_price: row.orig_price,
+        market: row.market,
+        shop_name: row.shop_name,
+        deal_url: row.deal_url,
+        image_url: row.image_url,
+        likes_count: row.likes_count,
+        comments_count: row.comments_count,
+        comment: row.comment,
+        is_expired: row.is_expired,
+        category: row.category ?? null,
+        brand: row.brand ?? null,
+        free_shipping: row.free_shipping ?? false,
+        expires_at: row.expires_at ?? null,
+        author_username: null,
+        author_avatar_url: null,
+        has_liked: false,
+        has_disliked: false,
+        has_commented: false,
+        has_saved: false,
+      })) as DealsRow[];
 
-      const sorted = [...normalized].sort((a, b) => {
-        const scoreDiff = getTopDealScore(b) - getTopDealScore(a);
-        if (scoreDiff !== 0) return scoreDiff;
+      const sortRows = (rows: DealsRow[]) =>
+        [...rows].sort((a, b) => {
+          const scoreDiff = getTopDealScore(b) - getTopDealScore(a);
+          if (scoreDiff !== 0) return scoreDiff;
 
-        const aTime = new Date(a.created_at).getTime();
-        const bTime = new Date(b.created_at).getTime();
-        return bTime - aTime;
-      });
+          const aTime = new Date(a.created_at).getTime();
+          const bTime = new Date(b.created_at).getTime();
+          return bTime - aTime;
+        });
 
-      setTopDeals(sorted);
-      setRecommendDeals(shuffle(normalized).slice(0, 15));
+      // まずDeal本体だけでカードを即表示する。
+      // プロフィール・いいね等の補助情報を待たせない。
+      const initialSorted = sortRows(baseRows);
+      const initialRecommended = shuffle(baseRows).slice(0, 15);
+      const recommendedIds = initialRecommended.map((row) => row.id);
+
+      setTopDeals(initialSorted);
+      setRecommendDeals(initialRecommended);
+
+      // 投稿者情報は第2段階で反映。
+      const withAuthors = await attachAuthorUsername(baseRows);
+      setTopDeals(sortRows(withAuthors));
+
+      const authorById = new Map(withAuthors.map((row) => [row.id, row]));
+      setRecommendDeals(
+        recommendedIds
+          .map((id) => authorById.get(id))
+          .filter((row): row is DealsRow => Boolean(row))
+      );
+
+      // いいね・低評価・保存・コメント済み等は最後に反映。
+      // ここが遅くても、カード自体はすでに表示されている。
+      const withFlags = await attachInteractionFlags(withAuthors, userId);
+      setTopDeals(sortRows(withFlags));
+
+      const flagsById = new Map(withFlags.map((row) => [row.id, row]));
+      setRecommendDeals(
+        recommendedIds
+          .map((id) => flagsById.get(id))
+          .filter((row): row is DealsRow => Boolean(row))
+      );
     },
     [attachAuthorUsername, attachInteractionFlags]
   );
