@@ -8,10 +8,11 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  EyeOff,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Search,
-  Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -39,10 +40,29 @@ type ManagedDeal = DealRow & {
   username: string | null;
 };
 
-type Filter = "all" | "visible" | "expired";
+type Filter = "all" | "visible" | "expired" | "hidden";
 type SortKey = "title" | "created_at" | "expires_at" | "likes_count" | "comments_count" | "is_expired";
 type SortDirection = "asc" | "desc";
-type BulkAction = "publish" | "expire" | "delete";
+type BulkAction = "publish" | "expire" | "hide";
+type HideReasonCode =
+  | "not_deal"
+  | "misleading"
+  | "duplicate"
+  | "prohibited"
+  | "spam"
+  | "other";
+
+const HIDE_REASON_OPTIONS: Array<{
+  value: HideReasonCode;
+  label: string;
+}> = [
+  { value: "not_deal", label: "セール・お得情報ではない" },
+  { value: "misleading", label: "価格・期限などの情報が不正確" },
+  { value: "duplicate", label: "重複投稿" },
+  { value: "prohibited", label: "規約違反・掲載不適切" },
+  { value: "spam", label: "スパム・宣伝目的" },
+  { value: "other", label: "その他" },
+];
 
 const PAGE_SIZE = 100;
 
@@ -82,6 +102,7 @@ export default function AdminDealsPage() {
   const [filteredTotalCount, setFilteredTotalCount] = useState(0);
   const [visibleCount, setVisibleCount] = useState(0);
   const [expiredCount, setExpiredCount] = useState(0);
+  const [hiddenCount, setHiddenCount] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
@@ -90,6 +111,9 @@ export default function AdminDealsPage() {
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingAction, setPendingAction] = useState<BulkAction | null>(null);
+  const [hideReasonCode, setHideReasonCode] =
+    useState<HideReasonCode>("not_deal");
+  const [hideReasonDetails, setHideReasonDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState("");
 
@@ -117,9 +141,15 @@ export default function AdminDealsPage() {
       });
 
     if (activeFilter === "expired") {
-      dealsQuery = dealsQuery.eq("is_expired", true);
+      dealsQuery = dealsQuery
+        .eq("moderation_status", "visible")
+        .eq("is_expired", true);
     } else if (activeFilter === "visible") {
-      dealsQuery = dealsQuery.eq("is_expired", false);
+      dealsQuery = dealsQuery
+        .eq("moderation_status", "visible")
+        .eq("is_expired", false);
+    } else if (activeFilter === "hidden") {
+      dealsQuery = dealsQuery.eq("moderation_status", "hidden");
     }
 
     const [
@@ -127,11 +157,24 @@ export default function AdminDealsPage() {
       { count: allTotal, error: totalCountError },
       { count: visibleTotal, error: visibleCountError },
       { count: expiredTotal, error: expiredCountError },
+      { count: hiddenTotal, error: hiddenCountError },
     ] = await Promise.all([
       dealsQuery.range(from, to),
       supabase.from("deals").select("id", { count: "exact", head: true }),
-      supabase.from("deals").select("id", { count: "exact", head: true }).eq("is_expired", false),
-      supabase.from("deals").select("id", { count: "exact", head: true }).eq("is_expired", true),
+      supabase
+        .from("deals")
+        .select("id", { count: "exact", head: true })
+        .eq("moderation_status", "visible")
+        .eq("is_expired", false),
+      supabase
+        .from("deals")
+        .select("id", { count: "exact", head: true })
+        .eq("moderation_status", "visible")
+        .eq("is_expired", true),
+      supabase
+        .from("deals")
+        .select("id", { count: "exact", head: true })
+        .eq("moderation_status", "hidden"),
     ]);
 
     if (dealsError) {
@@ -141,10 +184,18 @@ export default function AdminDealsPage() {
       return;
     }
 
-    if (totalCountError || visibleCountError || expiredCountError) {
+    if (
+      totalCountError ||
+      visibleCountError ||
+      expiredCountError ||
+      hiddenCountError
+    ) {
       console.error(
         "Admin deal summary count error:",
-        totalCountError ?? visibleCountError ?? expiredCountError
+        totalCountError ??
+          visibleCountError ??
+          expiredCountError ??
+          hiddenCountError
       );
       setErrorMessage("投稿件数を取得できませんでした。");
       setLoading(false);
@@ -156,6 +207,7 @@ export default function AdminDealsPage() {
     setFilteredTotalCount(filteredCount ?? 0);
     setVisibleCount(visibleTotal ?? 0);
     setExpiredCount(expiredTotal ?? 0);
+    setHiddenCount(hiddenTotal ?? 0);
 
     const userIds = Array.from(
       new Set(
@@ -207,8 +259,21 @@ export default function AdminDealsPage() {
     const keyword = searchText.trim().toLocaleLowerCase("ja-JP");
 
     return deals.filter((deal) => {
-      if (filter === "expired" && !deal.is_expired) return false;
-      if (filter === "visible" && deal.is_expired) return false;
+      if (
+        filter === "expired" &&
+        !(deal.moderation_status === "visible" && deal.is_expired)
+      ) {
+        return false;
+      }
+      if (
+        filter === "visible" &&
+        !(deal.moderation_status === "visible" && !deal.is_expired)
+      ) {
+        return false;
+      }
+      if (filter === "hidden" && deal.moderation_status !== "hidden") {
+        return false;
+      }
 
       if (!keyword) return true;
 
@@ -301,16 +366,27 @@ export default function AdminDealsPage() {
       ? "公開する"
       : pendingAction === "expire"
         ? "期限切れにする"
-        : "削除する";
+        : "運営非表示にする";
 
   const closeActionDialog = () => {
     if (submitting) return;
     setPendingAction(null);
+    setHideReasonCode("not_deal");
+    setHideReasonDetails("");
     setActionError("");
   };
 
   const runBulkAction = async () => {
     if (!pendingAction || selectedIds.size === 0 || submitting) return;
+
+    if (
+      pendingAction === "hide" &&
+      hideReasonCode === "other" &&
+      !hideReasonDetails.trim()
+    ) {
+      setActionError("「その他」を選んだ場合は理由を入力してください。");
+      return;
+    }
 
     setSubmitting(true);
     setActionError("");
@@ -354,23 +430,29 @@ export default function AdminDealsPage() {
 
       operationError = result.error;
     } else {
-      const result = await supabase.rpc("admin_delete_deals", {
-        p_deal_ids: ids,
-      });
+      const selectedReasonLabel =
+        HIDE_REASON_OPTIONS.find((option) => option.value === hideReasonCode)
+          ?.label ?? "その他";
+      const trimmedDetails = hideReasonDetails.trim();
+      const moderationReason = trimmedDetails
+        ? `【${selectedReasonLabel}】${trimmedDetails}`
+        : `【${selectedReasonLabel}】`;
+
+      const result = await supabase
+        .from("deals")
+        .update({
+          moderation_status: "hidden",
+          moderated_at: new Date().toISOString(),
+          moderation_reason: moderationReason,
+        })
+        .in("id", ids);
+
       operationError = result.error;
     }
 
     if (operationError) {
       console.error("Admin bulk deal action error:", operationError);
-
-      if (pendingAction === "delete") {
-        setActionError(
-          "削除できませんでした。コメント・いいね等の関連データが残っている可能性があります。DB側の削除ルールを確認してから安全に削除できるようにします。"
-        );
-      } else {
-        setActionError("選択した投稿の状態を変更できませんでした。");
-      }
-
+      setActionError("選択した投稿の状態を変更できませんでした。");
       setSubmitting(false);
       return;
     }
@@ -382,7 +464,7 @@ export default function AdminDealsPage() {
           ? "publish_deal"
           : pendingAction === "expire"
             ? "expire_deal"
-            : "delete_deal",
+            : "hide_deal",
       target_type: "deal",
       target_id: deal.id,
       details: {
@@ -391,9 +473,20 @@ export default function AdminDealsPage() {
         username: deal.username,
         previous_is_expired: Boolean(deal.is_expired),
         new_is_expired:
-          pendingAction === "delete"
-            ? null
+          pendingAction === "hide"
+            ? Boolean(deal.is_expired)
             : pendingAction === "expire",
+        previous_status: deal.moderation_status,
+        new_status:
+          pendingAction === "hide"
+            ? "hidden"
+            : "visible",
+        reason_code:
+          pendingAction === "hide" ? hideReasonCode : null,
+        reason:
+          pendingAction === "hide"
+            ? hideReasonDetails.trim() || null
+            : null,
         bulk_action: ids.length > 1,
       },
     }));
@@ -415,13 +508,17 @@ export default function AdminDealsPage() {
     }
 
     setPendingAction(null);
+    setHideReasonCode("not_deal");
+    setHideReasonDetails("");
     setSelectedIds(new Set());
     setSubmitting(false);
 
     const selectedLeavingCurrentFilter =
-      pendingAction === "delete" ||
-      (filter === "expired" && pendingAction === "publish") ||
-      (filter === "visible" && pendingAction === "expire")
+      (filter === "hidden" && pendingAction === "publish") ||
+      (filter === "expired" &&
+        (pendingAction === "publish" || pendingAction === "hide")) ||
+      (filter === "visible" &&
+        (pendingAction === "expire" || pendingAction === "hide"))
         ? ids.length
         : 0;
     const remainingFilteredCount = Math.max(
@@ -445,14 +542,15 @@ export default function AdminDealsPage() {
           投稿管理
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          ディールを公開中・期限切れに変更したり、不要な投稿を削除できます。
+          ディールを公開中・期限切れ・運営非表示に変更できます。物理削除は原則行いません。
         </p>
       </div>
 
-      <div className="mb-4 grid grid-cols-3 gap-3">
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <SummaryCard label="全投稿" value={totalCount} />
         <SummaryCard label="公開中" value={visibleCount} />
         <SummaryCard label="期限切れ" value={expiredCount} />
+        <SummaryCard label="運営非表示" value={hiddenCount} />
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -485,6 +583,7 @@ export default function AdminDealsPage() {
                   <option value="all">すべて</option>
                   <option value="visible">公開中</option>
                   <option value="expired">期限切れ</option>
+                  <option value="hidden">運営非表示</option>
                 </select>
 
                 <button
@@ -540,12 +639,14 @@ export default function AdminDealsPage() {
                   disabled={selectedIds.size === 0 || loading}
                   onClick={() => {
                     setActionError("");
-                    setPendingAction("delete");
+                    setHideReasonCode("not_deal");
+                    setHideReasonDetails("");
+                    setPendingAction("hide");
                   }}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  削除する
+                  <EyeOff className="h-3.5 w-3.5" />
+                  運営非表示
                 </button>
               </div>
             </div>
@@ -892,18 +993,64 @@ export default function AdminDealsPage() {
             <div className="px-4 py-4 sm:px-5">
               <p className="text-sm leading-6 text-slate-600">
                 {pendingAction === "publish"
-                  ? "選択した投稿を公開中に戻します。詳細ページは引き続き公開されます。"
+                  ? "選択した投稿を公開中に戻します。運営非表示の投稿も復元できます。"
                   : pendingAction === "expire"
-                    ? "選択した投稿を期限切れにします。投稿は削除されず、検索結果や詳細ページから引き続き閲覧できます。"
-                    : "選択した投稿を完全に削除します。この操作は元に戻せません。"}
+                    ? "選択した投稿を期限切れにします。投稿記録は残り、通常一覧から除外されます。"
+                    : "選択した投稿を運営非表示にします。一般ユーザーには表示されず、あとから復元できます。"}
               </p>
 
-              {pendingAction === "delete" ? (
-                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-                  <span>
-                    コメント・いいねなど関連データのDB制約によっては削除が拒否される場合があります。その場合はデータを壊さず停止します。
-                  </span>
+              {pendingAction === "hide" ? (
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <label
+                      htmlFor="deal-hide-reason"
+                      className="block text-sm font-semibold text-slate-700"
+                    >
+                      非表示理由
+                    </label>
+                    <select
+                      id="deal-hide-reason"
+                      value={hideReasonCode}
+                      onChange={(event) =>
+                        setHideReasonCode(event.target.value as HideReasonCode)
+                      }
+                      className="mt-2 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#006888]"
+                    >
+                      {HIDE_REASON_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="deal-hide-details"
+                      className="block text-sm font-semibold text-slate-700"
+                    >
+                      補足
+                      {hideReasonCode === "other" ? "（必須）" : "（任意）"}
+                    </label>
+                    <textarea
+                      id="deal-hide-details"
+                      value={hideReasonDetails}
+                      onChange={(event) =>
+                        setHideReasonDetails(event.target.value)
+                      }
+                      rows={3}
+                      maxLength={1000}
+                      placeholder="必要に応じて判断理由を記録"
+                      className="mt-2 w-full resize-none rounded-lg border border-slate-300 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#006888] focus:ring-2 focus:ring-[#006888]/10"
+                    />
+                  </div>
+
+                  <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs leading-5 text-slate-600">
+                    <EyeOff className="mt-0.5 h-4 w-4 flex-none" />
+                    <span>
+                      物理削除はしません。投稿データと関連履歴を保持したまま公開対象から外します。
+                    </span>
+                  </div>
                 </div>
               ) : null}
 
@@ -930,7 +1077,7 @@ export default function AdminDealsPage() {
                 onClick={() => void runBulkAction()}
                 disabled={submitting}
                 className={`flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none ${
-                  pendingAction === "delete"
+                  pendingAction === "hide"
                     ? "bg-red-600 hover:bg-red-700"
                     : pendingAction === "expire"
                       ? "bg-slate-700 hover:bg-slate-800"
@@ -939,10 +1086,10 @@ export default function AdminDealsPage() {
               >
                 {submitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
-                ) : pendingAction === "delete" ? (
-                  <Trash2 className="h-4 w-4" />
+                ) : pendingAction === "hide" ? (
+                  <EyeOff className="h-4 w-4" />
                 ) : pendingAction === "publish" ? (
-                  <CheckCircle2 className="h-4 w-4" />
+                  <RotateCcw className="h-4 w-4" />
                 ) : (
                   <AlertTriangle className="h-4 w-4" />
                 )}
@@ -1020,6 +1167,15 @@ function SummaryCard({
 }
 
 function DealStatus({ deal }: { deal: ManagedDeal }) {
+  if (deal.moderation_status === "hidden") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+        <EyeOff className="h-3.5 w-3.5" />
+        運営非表示
+      </span>
+    );
+  }
+
   if (deal.is_expired) {
     return (
       <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
