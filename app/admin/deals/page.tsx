@@ -13,6 +13,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -43,7 +44,7 @@ type ManagedDeal = DealRow & {
 type Filter = "all" | "visible" | "expired" | "hidden";
 type SortKey = "title" | "created_at" | "expires_at" | "likes_count" | "comments_count" | "is_expired";
 type SortDirection = "asc" | "desc";
-type BulkAction = "publish" | "expire" | "hide";
+type BulkAction = "publish" | "expire" | "hide" | "delete";
 type HideReasonCode =
   | "not_deal"
   | "misleading"
@@ -366,7 +367,9 @@ export default function AdminDealsPage() {
       ? "公開する"
       : pendingAction === "expire"
         ? "期限切れにする"
-        : "運営非表示にする";
+        : pendingAction === "hide"
+          ? "運営非表示にする"
+          : "完全削除する";
 
   const closeActionDialog = () => {
     if (submitting) return;
@@ -429,7 +432,7 @@ export default function AdminDealsPage() {
         .in("id", ids);
 
       operationError = result.error;
-    } else {
+    } else if (pendingAction === "hide") {
       const selectedReasonLabel =
         HIDE_REASON_OPTIONS.find((option) => option.value === hideReasonCode)
           ?.label ?? "その他";
@@ -448,11 +451,21 @@ export default function AdminDealsPage() {
         .in("id", ids);
 
       operationError = result.error;
+    } else {
+      const result = await supabase.rpc("admin_delete_deals", {
+        p_deal_ids: ids,
+      });
+
+      operationError = result.error;
     }
 
     if (operationError) {
       console.error("Admin bulk deal action error:", operationError);
-      setActionError("選択した投稿の状態を変更できませんでした。");
+      setActionError(
+        pendingAction === "delete"
+          ? "削除できませんでした。コメント・いいね等の関連データが残っている場合は、DB側の削除ルールにより拒否されることがあります。"
+          : "選択した投稿の状態を変更できませんでした。"
+      );
       setSubmitting(false);
       return;
     }
@@ -464,7 +477,9 @@ export default function AdminDealsPage() {
           ? "publish_deal"
           : pendingAction === "expire"
             ? "expire_deal"
-            : "hide_deal",
+            : pendingAction === "hide"
+              ? "hide_deal"
+              : "delete_deal",
       target_type: "deal",
       target_id: deal.id,
       details: {
@@ -473,20 +488,26 @@ export default function AdminDealsPage() {
         username: deal.username,
         previous_is_expired: Boolean(deal.is_expired),
         new_is_expired:
-          pendingAction === "hide"
-            ? Boolean(deal.is_expired)
-            : pendingAction === "expire",
+          pendingAction === "delete"
+            ? null
+            : pendingAction === "hide"
+              ? Boolean(deal.is_expired)
+              : pendingAction === "expire",
         previous_status: deal.moderation_status,
         new_status:
-          pendingAction === "hide"
-            ? "hidden"
-            : "visible",
+          pendingAction === "delete"
+            ? null
+            : pendingAction === "hide"
+              ? "hidden"
+              : "visible",
         reason_code:
           pendingAction === "hide" ? hideReasonCode : null,
         reason:
           pendingAction === "hide"
             ? hideReasonDetails.trim() || null
-            : null,
+            : pendingAction === "delete"
+              ? "管理者による完全削除"
+              : null,
         bulk_action: ids.length > 1,
       },
     }));
@@ -514,6 +535,7 @@ export default function AdminDealsPage() {
     setSubmitting(false);
 
     const selectedLeavingCurrentFilter =
+      pendingAction === "delete" ||
       (filter === "hidden" && pendingAction === "publish") ||
       (filter === "expired" &&
         (pendingAction === "publish" || pendingAction === "hide")) ||
@@ -647,6 +669,19 @@ export default function AdminDealsPage() {
                 >
                   <EyeOff className="h-3.5 w-3.5" />
                   運営非表示
+                </button>
+
+                <button
+                  type="button"
+                  disabled={selectedIds.size === 0 || loading}
+                  onClick={() => {
+                    setActionError("");
+                    setPendingAction("delete");
+                  }}
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  完全削除
                 </button>
               </div>
             </div>
@@ -996,7 +1031,9 @@ export default function AdminDealsPage() {
                   ? "選択した投稿を公開中に戻します。運営非表示の投稿も復元できます。"
                   : pendingAction === "expire"
                     ? "選択した投稿を期限切れにします。投稿記録は残り、通常一覧から除外されます。"
-                    : "選択した投稿を運営非表示にします。一般ユーザーには表示されず、あとから復元できます。"}
+                    : pendingAction === "hide"
+                      ? "選択した投稿を運営非表示にします。一般ユーザーには表示されず、あとから復元できます。"
+                      : "選択した投稿を完全に削除します。テスト投稿など、履歴を残す必要がないものだけに使用してください。"}
               </p>
 
               {pendingAction === "hide" ? (
@@ -1054,6 +1091,15 @@ export default function AdminDealsPage() {
                 </div>
               ) : null}
 
+              {pendingAction === "delete" ? (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                  <span>
+                    完全削除は元に戻せません。通常の不適切投稿には「運営非表示」を使い、テスト投稿・誤作成など削除して問題ないものだけに使用してください。
+                  </span>
+                </div>
+              ) : null}
+
               {actionError ? (
                 <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
                   <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
@@ -1077,15 +1123,19 @@ export default function AdminDealsPage() {
                 onClick={() => void runBulkAction()}
                 disabled={submitting}
                 className={`flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none ${
-                  pendingAction === "hide"
-                    ? "bg-red-600 hover:bg-red-700"
-                    : pendingAction === "expire"
+                  pendingAction === "delete"
+                    ? "bg-red-700 hover:bg-red-800"
+                    : pendingAction === "hide"
+                      ? "bg-red-600 hover:bg-red-700"
+                      : pendingAction === "expire"
                       ? "bg-slate-700 hover:bg-slate-800"
                       : "bg-[#006888] hover:bg-[#00566f]"
                 }`}
               >
                 {submitting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
+                ) : pendingAction === "delete" ? (
+                  <Trash2 className="h-4 w-4" />
                 ) : pendingAction === "hide" ? (
                   <EyeOff className="h-4 w-4" />
                 ) : pendingAction === "publish" ? (
