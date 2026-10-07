@@ -24,6 +24,7 @@ import {
   Calendar,
   ArrowUp,
   MoreHorizontal,
+  Flag,
   X,
 } from "lucide-react";
 
@@ -659,6 +660,15 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportSuccess, setReportSuccess] = useState(false);
+
+  const [dealReportOpen, setDealReportOpen] = useState(false);
+  const [dealReportReason, setDealReportReason] = useState<
+    "expired" | "price_wrong" | "not_deal" | "duplicate" | "inappropriate" | "other" | ""
+  >("");
+  const [dealReportDetails, setDealReportDetails] = useState("");
+  const [dealReportSubmitting, setDealReportSubmitting] = useState(false);
+  const [dealReportError, setDealReportError] = useState<string | null>(null);
+  const [dealReportSuccess, setDealReportSuccess] = useState(false);
 
   const [popular, setPopular] = useState<SidebarDeal[]>([]);
   const [trending, setTrending] = useState<SidebarDeal[]>([]);
@@ -3002,6 +3012,68 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
     </div>
   );
 
+  const openDealReportDialog = () => {
+    if (!currentUser) {
+      alert("商品を報告するには、ログインが必要です。");
+      return;
+    }
+
+    if (deal?.user_id && deal.user_id === currentUser.id) {
+      alert("自分の投稿は報告できません。");
+      return;
+    }
+
+    setDealReportReason("");
+    setDealReportDetails("");
+    setDealReportError(null);
+    setDealReportSuccess(false);
+    setDealReportOpen(true);
+  };
+
+  const closeDealReportDialog = () => {
+    if (dealReportSubmitting) return;
+    setDealReportOpen(false);
+    setDealReportReason("");
+    setDealReportDetails("");
+    setDealReportError(null);
+    setDealReportSuccess(false);
+  };
+
+  const handleDealReportSubmit = async () => {
+    if (!currentUser || !deal?.id || !dealReportReason || dealReportSubmitting) {
+      return;
+    }
+
+    if (dealReportReason === "other" && !dealReportDetails.trim()) {
+      setDealReportError("「その他」を選んだ場合は詳細を入力してください。");
+      return;
+    }
+
+    setDealReportSubmitting(true);
+    setDealReportError(null);
+
+    const { error } = await supabase.from("deal_reports").insert({
+      reporter_user_id: currentUser.id,
+      deal_id: deal.id,
+      reason: dealReportReason,
+      details: dealReportDetails.trim() || null,
+    });
+
+    if (error) {
+      if ((error as any).code === "23505") {
+        setDealReportError("この商品はすでに報告済みです。");
+      } else {
+        console.error("deal report error:", error);
+        setDealReportError("報告の送信に失敗しました。もう一度お試しください。");
+      }
+      setDealReportSubmitting(false);
+      return;
+    }
+
+    setDealReportSuccess(true);
+    setDealReportSubmitting(false);
+  };
+
   const openReportDialog = (type: "comment" | "reply", id: string) => {
     if (!currentUser) {
       redirectToLogin();
@@ -4065,6 +4137,18 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                     </span>
                     <span className="text-center text-[12px]">シェア</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={openDealReportDialog}
+                    className="flex w-[52px] flex-none cursor-pointer flex-col items-center gap-2 text-center text-slate-700"
+                    title="この商品を報告"
+                  >
+                    <span className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-300 bg-white">
+                      <Flag className="h-5 w-5 text-slate-600" />
+                    </span>
+                    <span className="text-center text-[12px]">報告</span>
+                  </button>
                 </div>
               </div>
 
@@ -4173,6 +4257,111 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
             </>
           )}
         </main>
+
+        {dealReportOpen ? (
+          <div
+            className="fixed inset-0 z-[120] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeDealReportDialog();
+            }}
+          >
+            <div
+              className="w-full rounded-t-2xl border border-slate-200 bg-white shadow-2xl sm:max-w-lg sm:rounded-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="deal-report-title"
+            >
+              <div className="flex items-start justify-between border-b border-slate-200 px-4 py-4 sm:px-5">
+                <div>
+                  <h2 id="deal-report-title" className="text-lg font-bold text-[#001e43]">
+                    この商品を報告
+                  </h2>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    期限切れ、価格違い、セールではない商品などを運営へ知らせます。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeDealReportDialog}
+                  disabled={dealReportSubmitting}
+                  className="cursor-pointer rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed"
+                  aria-label="閉じる"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="px-4 py-4 sm:px-5">
+                {dealReportSuccess ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+                    報告を受け付けました。ご協力ありがとうございます。
+                  </div>
+                ) : (
+                  <>
+                    <label className="block text-sm font-semibold text-slate-700">
+                      報告理由
+                    </label>
+                    <select
+                      value={dealReportReason}
+                      onChange={(event) =>
+                        setDealReportReason(event.target.value as typeof dealReportReason)
+                      }
+                      className="mt-2 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#006888]"
+                    >
+                      <option value="">選択してください</option>
+                      <option value="expired">セール・クーポンの期限が切れている</option>
+                      <option value="price_wrong">価格・割引情報が違う</option>
+                      <option value="not_deal">セール・お得情報ではない</option>
+                      <option value="duplicate">重複投稿</option>
+                      <option value="inappropriate">不適切・規約違反</option>
+                      <option value="other">その他</option>
+                    </select>
+
+                    <label className="mt-4 block text-sm font-semibold text-slate-700">
+                      詳細{dealReportReason === "other" ? "（必須）" : "（任意）"}
+                    </label>
+                    <textarea
+                      value={dealReportDetails}
+                      onChange={(event) => setDealReportDetails(event.target.value)}
+                      rows={4}
+                      maxLength={1000}
+                      placeholder="例：商品ページではセールが終了しています"
+                      className="mt-2 w-full resize-none rounded-lg border border-slate-300 px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#006888] focus:ring-2 focus:ring-[#006888]/10"
+                    />
+
+                    {dealReportError ? (
+                      <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+                        {dealReportError}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+
+              <div className="flex gap-2 border-t border-slate-200 px-4 py-4 sm:justify-end sm:px-5">
+                <button
+                  type="button"
+                  onClick={closeDealReportDialog}
+                  disabled={dealReportSubmitting}
+                  className="cursor-pointer rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {dealReportSuccess ? "閉じる" : "キャンセル"}
+                </button>
+                {!dealReportSuccess ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleDealReportSubmit()}
+                    disabled={!dealReportReason || dealReportSubmitting}
+                    className="cursor-pointer rounded-full bg-[#001e43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#002b66] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {dealReportSubmitting ? "送信中..." : "報告する"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {reportTarget ? (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 px-4" onClick={closeReportDialog}>
@@ -4692,6 +4881,18 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
                               <Forward className="h-4 w-4" />
                             </span>
                             <span className="text-center text-[12px]">シェア</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={openDealReportDialog}
+                            className="flex w-[52px] flex-none cursor-pointer flex-col items-center gap-1.5 text-center text-slate-700"
+                            title="この商品を報告"
+                          >
+                            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-white">
+                              <Flag className="h-4 w-4" />
+                            </span>
+                            <span className="text-center text-[12px]">報告</span>
                           </button>
                         </div>
 

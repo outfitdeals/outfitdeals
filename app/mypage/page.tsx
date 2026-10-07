@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  AlertTriangle,
   Bell,
   Bookmark,
   CheckCircle2,
@@ -78,7 +79,7 @@ type SavedRow = {
 type NotificationRow = {
   id: string;
   created_at: string;
-  type: "reply" | "mention" | "like";
+  type: "reply" | "mention" | "like" | "moderation";
   user_id: string;
   actor_id: string;
   deal_id: string;
@@ -87,6 +88,9 @@ type NotificationRow = {
   read_at: string | null;
   actor_username: string;
   body: string;
+  moderation_reason?: string | null;
+  moderation_details?: string | null;
+  moderation_deal_title?: string | null;
 };
 
 type DealMini = {
@@ -992,21 +996,35 @@ function MyPageContent() {
   const loadNotifications = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
-      .from("notifications")
-      .select(
-        "id, created_at, type, user_id, actor_id, deal_id, comment_id, reply_id, read_at"
-      )
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+    const [regularResult, moderationResult] = await Promise.all([
+      supabase
+        .from("notifications")
+        .select(
+          "id, created_at, type, user_id, actor_id, deal_id, comment_id, reply_id, read_at"
+        )
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("moderation_notifications")
+        .select(
+          "id, created_at, user_id, actor_id, deal_id, deal_title, reason_label, details, read_at"
+        )
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+    ]);
 
-    if (error) {
-      console.error("load notifications error:", error);
-      setNotifications([]);
-      return;
+    if (regularResult.error) {
+      console.error("load notifications error:", regularResult.error);
     }
 
-    const rows = data ?? [];
+    if (moderationResult.error) {
+      console.error(
+        "load moderation notifications error:",
+        moderationResult.error
+      );
+    }
+
+    const rows = regularResult.data ?? [];
     const actorIds = Array.from(
       new Set(rows.map((row: any) => String(row.actor_id)).filter(Boolean))
     );
@@ -1051,7 +1069,7 @@ function MyPageContent() {
       }
     }
 
-    const normalized = rows.map((row: any) => ({
+    const regular = rows.map((row: any) => ({
       id: String(row.id),
       created_at: row.created_at,
       type: row.type,
@@ -1065,9 +1083,31 @@ function MyPageContent() {
       body: row.reply_id ? replyBodyMap[String(row.reply_id)] ?? "" : "",
     })) as NotificationRow[];
 
+    const moderation = (moderationResult.data ?? []).map((row: any) => ({
+      id: `moderation:${String(row.id)}`,
+      created_at: row.created_at,
+      type: "moderation" as const,
+      user_id: String(row.user_id),
+      actor_id: row.actor_id ? String(row.actor_id) : "",
+      deal_id: row.deal_id ? String(row.deal_id) : "",
+      comment_id: null,
+      reply_id: null,
+      read_at: row.read_at ?? null,
+      actor_username: "トクミッケ運営",
+      body: "",
+      moderation_reason: row.reason_label ?? "運営判断",
+      moderation_details: row.details ?? null,
+      moderation_deal_title: row.deal_title ?? null,
+    })) as NotificationRow[];
+
+    const normalized = [...regular, ...moderation].sort(
+      (a, b) => +new Date(b.created_at) - +new Date(a.created_at)
+    );
+
     setNotifications(normalized);
+
     await upsertDealMinis(
-      normalized.map((row) => row.deal_id).filter(Boolean)
+      regular.map((row) => row.deal_id).filter(Boolean)
     );
   }, [user, upsertDealMinis]);
 
@@ -1145,10 +1185,15 @@ function MyPageContent() {
         )
       );
 
+      const isModeration = item.type === "moderation";
+      const notificationId = isModeration
+        ? item.id.replace(/^moderation:/, "")
+        : item.id;
+
       const { error } = await supabase
-        .from("notifications")
+        .from(isModeration ? "moderation_notifications" : "notifications")
         .update({ read_at: readAt })
-        .eq("id", item.id);
+        .eq("id", notificationId);
 
       if (error) {
         console.warn("mark notification read warn:", error);
@@ -1160,6 +1205,11 @@ function MyPageContent() {
       } else {
         window.dispatchEvent(new Event("tokumikke:notifications-changed"));
       }
+    }
+
+    if (item.type === "moderation") {
+      handleTopTabChange("deals");
+      return;
     }
 
     const anchor = item.comment_id ? `#comment-${item.comment_id}` : "";
@@ -3114,7 +3164,7 @@ function MyPageContent() {
               <div>
                 <h1 className="text-xl font-bold text-slate-900">通知</h1>
                 <p className="mt-1 text-xs text-slate-500">
-                  コメントへの返信など、あなた宛ての通知
+                  コメントへの返信や運営からのお知らせ
                 </p>
               </div>
 
@@ -3132,7 +3182,7 @@ function MyPageContent() {
                   通知はありません。
                 </div>
                 <p className="mt-1 text-xs text-slate-500">
-                  コメントへの返信などがあると、ここに表示されます。
+                  コメントへの返信や運営からのお知らせがあると、ここに表示されます。
                 </p>
               </div>
             ) : (
@@ -3157,16 +3207,31 @@ function MyPageContent() {
                               : "bg-slate-100 text-slate-500"
                           }`}
                         >
-                          <MessageSquare className="h-4 w-4" />
+                          {item.type === "moderation" ? (
+                            <AlertTriangle className="h-4 w-4" />
+                          ) : (
+                            <MessageSquare className="h-4 w-4" />
+                          )}
                         </div>
 
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-3">
                             <p className="text-sm text-slate-800">
-                              <span className="font-bold text-slate-900">
-                                {item.actor_username}
-                              </span>
-                              さんがあなたのコメントに返信しました
+                              {item.type === "moderation" ? (
+                                <>
+                                  <span className="font-bold text-slate-900">
+                                    トクミッケ運営
+                                  </span>
+                                  からのお知らせ：あなたの投稿が運営非表示になりました
+                                </>
+                              ) : (
+                                <>
+                                  <span className="font-bold text-slate-900">
+                                    {item.actor_username}
+                                  </span>
+                                  さんがあなたのコメントに返信しました
+                                </>
+                              )}
                             </p>
 
                             {isUnread ? (
@@ -3177,17 +3242,37 @@ function MyPageContent() {
                             ) : null}
                           </div>
 
-                          {item.body ? (
-                            <p className="mt-1 line-clamp-2 text-sm text-slate-700">
-                              「{item.body}」
-                            </p>
-                          ) : null}
+                          {item.type === "moderation" ? (
+                            <>
+                              <p className="mt-1 text-sm font-semibold text-red-700">
+                                理由：{item.moderation_reason || "運営判断"}
+                              </p>
+                              {item.moderation_details ? (
+                                <p className="mt-1 line-clamp-2 text-sm text-slate-700">
+                                  {item.moderation_details}
+                                </p>
+                              ) : null}
+                              {item.moderation_deal_title ? (
+                                <p className="mt-1 line-clamp-1 text-xs text-slate-500">
+                                  {item.moderation_deal_title}
+                                </p>
+                              ) : null}
+                            </>
+                          ) : (
+                            <>
+                              {item.body ? (
+                                <p className="mt-1 line-clamp-2 text-sm text-slate-700">
+                                  「{item.body}」
+                                </p>
+                              ) : null}
 
-                          {deal?.title ? (
-                            <p className="mt-1 line-clamp-1 text-xs text-slate-500">
-                              {deal.title}
-                            </p>
-                          ) : null}
+                              {deal?.title ? (
+                                <p className="mt-1 line-clamp-1 text-xs text-slate-500">
+                                  {deal.title}
+                                </p>
+                              ) : null}
+                            </>
+                          )}
 
                           <div className="mt-1.5 text-[11px] text-slate-400">
                             {fmtJP(item.created_at)}

@@ -20,7 +20,8 @@ const NAV_ITEMS = [
   { href: "/admin/users", label: "ユーザー", icon: Users },
   { href: "/admin/deals", label: "投稿", icon: FileText },
   { href: "/admin/comments", label: "コメント", icon: MessageSquare },
-  { href: "/admin/reports", label: "通報", icon: AlertTriangle },
+  { href: "/admin/reports", label: "コメント通報", icon: AlertTriangle },
+  { href: "/admin/deal-reports", label: "商品通報", icon: AlertTriangle },
   { href: "/admin/audit-logs", label: "操作履歴", icon: History },
 ];
 
@@ -30,7 +31,8 @@ export default function AdminLayout({
   const pathname = usePathname();
   const router = useRouter();
   const [checkingAccess, setCheckingAccess] = useState(true);
-  const [pendingReports, setPendingReports] = useState(0);
+  const [pendingCommentReports, setPendingCommentReports] = useState(0);
+  const [pendingDealReports, setPendingDealReports] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,16 +61,32 @@ export default function AdminLayout({
         return;
       }
 
-      const { count, error: reportsError } = await supabase
-        .from("comment_reports")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "pending");
+      const [commentReportsResult, dealReportsResult] = await Promise.all([
+        supabase
+          .from("comment_reports")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending"),
+        supabase
+          .from("deal_reports")
+          .select("id", { count: "exact", head: true })
+          .eq("status", "pending"),
+      ]);
 
       if (!cancelled) {
-        if (reportsError) {
-          console.error("Admin pending reports count error:", reportsError);
+        if (commentReportsResult.error) {
+          console.error(
+            "Admin pending comment reports count error:",
+            commentReportsResult.error
+          );
         }
-        setPendingReports(count ?? 0);
+        if (dealReportsResult.error) {
+          console.error(
+            "Admin pending deal reports count error:",
+            dealReportsResult.error
+          );
+        }
+        setPendingCommentReports(commentReportsResult.count ?? 0);
+        setPendingDealReports(dealReportsResult.count ?? 0);
         setCheckingAccess(false);
       }
     };
@@ -137,9 +155,16 @@ export default function AdminLayout({
                       <span className="whitespace-nowrap">{item.label}</span>
 
                       {item.href === "/admin/reports" &&
-                      pendingReports > 0 ? (
+                      pendingCommentReports > 0 ? (
                         <span className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold leading-5 text-white">
-                          {pendingReports > 99 ? "99+" : pendingReports}
+                          {pendingCommentReports > 99
+                            ? "99+"
+                            : pendingCommentReports}
+                        </span>
+                      ) : item.href === "/admin/deal-reports" &&
+                        pendingDealReports > 0 ? (
+                        <span className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold leading-5 text-white">
+                          {pendingDealReports > 99 ? "99+" : pendingDealReports}
                         </span>
                       ) : null}
                     </Link>
