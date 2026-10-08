@@ -263,7 +263,7 @@ function Card({
 
   return (
     <article className="flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_18px_-10px_rgba(15,23,42,0.28)] transition hover:shadow-[0_12px_24px_-10px_rgba(15,23,42,0.34)]">
-      <div className="px-3 pt-3 text-xs text-slate-500">
+      <div className="px-3 pt-3 text-[11.5px] leading-[1.35] text-slate-500">
         <div className="flex items-center gap-2">
           {d.userId ? (
             <Link
@@ -292,12 +292,18 @@ function Card({
               {d.userId ? (
                 <Link
                   href={`/users/${d.userId}`}
-                  className="cursor-pointer font-medium text-slate-700 hover:text-[#006888] hover:underline"
+                  className="inline-block max-w-[86px] truncate align-bottom cursor-pointer font-medium text-slate-700 hover:text-[#006888] hover:underline"
+                  title={d.user}
                 >
                   {d.user}
                 </Link>
               ) : (
-                <span className="font-medium text-slate-700">{d.user}</span>
+                <span
+                  className="inline-block max-w-[86px] truncate align-bottom font-medium text-slate-700"
+                  title={d.user}
+                >
+                  {d.user}
+                </span>
               )}
             </div>
             <div>{d.time}</div>
@@ -1682,6 +1688,9 @@ function PageContent() {
   const lastRefreshAtRef = useRef(0);
   const searchResultsTopRef = useRef<HTMLDivElement | null>(null);
   const searchRequestIdRef = useRef(0);
+  const desktopSidebarRef = useRef<HTMLDivElement | null>(null);
+  const [desktopSidebarFitsViewport, setDesktopSidebarFitsViewport] =
+    useState(false);
   const searchFacetRequestIdRef = useRef(0);
   const previousSearchCriteriaKeyRef = useRef<string | null>(null);
   const topDealsLoadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -3345,6 +3354,28 @@ function PageContent() {
   const sideTrendingVM = sideTrending.map(toSideVM);
   const sideEndingSoonVM = sideEndingSoon.map(toSideVM);
 
+  useLayoutEffect(() => {
+    const sidebar = desktopSidebarRef.current;
+    if (!sidebar) return;
+
+    const updateSidebarFit = () => {
+      const sidebarHeight = sidebar.getBoundingClientRect().height;
+      const availableHeight = Math.max(0, window.innerHeight - 112);
+      setDesktopSidebarFitsViewport(sidebarHeight <= availableHeight);
+    };
+
+    updateSidebarFit();
+
+    const resizeObserver = new ResizeObserver(updateSidebarFit);
+    resizeObserver.observe(sidebar);
+    window.addEventListener("resize", updateSidebarFit);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateSidebarFit);
+    };
+  }, [sidePopularVM.length, sideTrendingVM.length, sideEndingSoonVM.length]);
+
   const recommendMobileRows = recommendFiltered.slice(0, 15);
   const topDealsMobileRows = topDealsForThisPageRows;
 
@@ -4401,21 +4432,30 @@ function PageContent() {
                 </div>
               </section>
 
-              <RightSidebar
-                popular={sidePopularVM}
-                trending={sideTrendingVM}
-                endingSoon={sideEndingSoonVM}
-                className="sticky bottom-4 w-72 flex-none self-end space-y-4 mt-[44px] pl-1 pt-1 pr-2 pb-2"
-                onLike={(id) => handleLikeAny(id)}
-                onShare={(id) => {
-                  const deal = [...sidePopularVM, ...sideTrendingVM, ...sideEndingSoonVM].find(
-                    (item) => item.id === id,
-                  );
-                  void handleShareDeal(deal?.detailUrl ?? `/deals/${id}`, deal?.title);
-                }}
-                canLike={true}
-                showRank={false}
-              />
+              <div
+                ref={desktopSidebarRef}
+                className={
+                  desktopSidebarFitsViewport
+                    ? "sticky top-24 w-72 flex-none self-start mt-[44px]"
+                    : "sticky bottom-4 w-72 flex-none self-end mt-[44px]"
+                }
+              >
+                <RightSidebar
+                  popular={sidePopularVM}
+                  trending={sideTrendingVM}
+                  endingSoon={sideEndingSoonVM}
+                  className="w-full space-y-4 pl-1 pt-1 pr-2 pb-2"
+                  onLike={(id) => handleLikeAny(id)}
+                  onShare={(id) => {
+                    const deal = [...sidePopularVM, ...sideTrendingVM, ...sideEndingSoonVM].find(
+                      (item) => item.id === id,
+                    );
+                    void handleShareDeal(deal?.detailUrl ?? `/deals/${id}`, deal?.title);
+                  }}
+                  canLike={true}
+                  showRank={false}
+                />
+              </div>
             </div>
           </div>
         </main>
