@@ -21,9 +21,14 @@ export default function AuthPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordMismatch, setPasswordMismatch] = useState(false);
   const [username, setUsername] = useState("");
   const [mode, setMode] = useState<"signup" | "login">("login");
   const [message, setMessage] = useState<string | null>(null);
+  const [signupSubmittedEmail, setSignupSubmittedEmail] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [showSignupDialog, setShowSignupDialog] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<"google" | "line" | null>(null);
   const [legalConsent, setEmailUseConsent] = useState(false);
   const [showConsentError, setShowConsentError] = useState(false);
@@ -94,11 +99,21 @@ export default function AuthPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
     setMessage(null);
 
     if (mode === "signup") {
+      if (password !== confirmPassword) {
+        setPasswordMismatch(true);
+        setMessage(null);
+        return;
+      }
+
+      setPasswordMismatch(false);
+
       if (!legalConsent) {
-        setMessage("利用規約およびプライバシーポリシーに同意してください。");
+        setShowConsentError(true);
+        setMessage(null);
         return;
       }
 
@@ -121,22 +136,38 @@ export default function AuthPage() {
         return;
       }
 
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            username: trimmed,
-            terms_accepted_at: new Date().toISOString(),
-            privacy_accepted_at: new Date().toISOString(),
-          },
-        },
-      });
+      if (signupSubmittedEmail === email.trim().toLowerCase()) {
+        setMessage(null);
+        setShowSignupDialog(true);
+        return;
+      }
 
-      if (error) {
-        setMessage(`Sign up error: ${error.message}`);
-      } else {
-        setMessage("サインアップ用メールを送信しました。受信箱を確認してください。");
+      setSubmitting(true);
+      try {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback?verified=1&next=${encodeURIComponent(getSafeReturnTo())}`,
+            data: {
+              username: trimmed,
+              terms_accepted_at: new Date().toISOString(),
+              privacy_accepted_at: new Date().toISOString(),
+            },
+          },
+        });
+
+        if (error) {
+          setMessage(`登録手続きに失敗しました：${error.message}`);
+        } else {
+          setSignupSubmittedEmail(email.trim().toLowerCase());
+          setMessage(null);
+          setShowSignupDialog(true);
+        }
+      } catch {
+        setMessage("登録処理中に問題が発生しました。時間をおいてお試しください。");
+      } finally {
+        setSubmitting(false);
       }
     } else {
       const { error } = await supabase.auth.signInWithPassword({
@@ -211,6 +242,12 @@ export default function AuthPage() {
             </label>
 
             {showConsentError ? (
+              <p className="mt-2 text-xs font-semibold text-red-600">
+                利用規約およびプライバシーポリシーへの同意が必要です。
+              </p>
+            ) : null}
+
+            {showConsentError ? (
               <p className="mt-2 text-xs font-semibold leading-5 text-red-600">
                 新規登録するには、上記への同意が必要です。
               </p>
@@ -282,6 +319,12 @@ export default function AuthPage() {
                 className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
                 placeholder="例：トクミッケ太郎"
                 required
+                onInvalid={(e) =>
+                  e.currentTarget.setCustomValidity(
+                    "ユーザー名を入力してください。"
+                  )
+                }
+                onInput={(e) => e.currentTarget.setCustomValidity("")}
               />
               <p className="mt-1 text-xs text-slate-500">
                 コメントなどに表示される名前です。（2〜10文字）
@@ -299,9 +342,19 @@ export default function AuthPage() {
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setSignupSubmittedEmail(null);
+                setMessage(null);
+              }}
               className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
               required
+              onInvalid={(e) =>
+                e.currentTarget.setCustomValidity(
+                  "メールアドレスを入力してください。"
+                )
+              }
+              onInput={(e) => e.currentTarget.setCustomValidity("")}
             />
           </div>
 
@@ -310,19 +363,66 @@ export default function AuthPage() {
               パスワード
             </label>
             <input
-              type="password"
+              type="text"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setPassword(next);
+                if (passwordMismatch && next === confirmPassword) {
+                  setPasswordMismatch(false);
+                }
+              }}
               className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
               required
+              onInvalid={(e) =>
+                e.currentTarget.setCustomValidity(
+                  "パスワードを入力してください。"
+                )
+              }
+              onInput={(e) => e.currentTarget.setCustomValidity("")}
             />
           </div>
 
+          {mode === "signup" && (
+            <div>
+              <label className="block text-sm text-slate-700 mb-1">
+                パスワード（確認）
+              </label>
+              <input
+                type="text"
+                value={confirmPassword}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setConfirmPassword(next);
+                  setPasswordMismatch(next.length > 0 && next !== password);
+                }}
+                className={`w-full rounded border px-3 py-2 text-sm ${
+                  passwordMismatch
+                    ? "border-red-500 bg-red-50 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                    : "border-slate-300"
+                }`}
+                required
+                onInvalid={(e) =>
+                  e.currentTarget.setCustomValidity(
+                    "確認用パスワードを入力してください。"
+                  )
+                }
+                onInput={(e) => e.currentTarget.setCustomValidity("")}
+              />
+              {passwordMismatch ? (
+                <p className="mt-1 text-xs font-semibold text-red-600">
+                  パスワードが一致していません。
+                </p>
+              ) : null}
+            </div>
+          )}
+
           <button
             type="submit"
-            className="w-full cursor-pointer rounded-md bg-[#001e43] text-white py-2 text-sm font-medium hover:bg-[#022a6b]"
+            disabled={submitting}
+            className="w-full cursor-pointer rounded-md bg-[#001e43] text-white py-2 text-sm font-medium hover:bg-[#022a6b] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {mode === "signup" ? "メールで登録" : "ログイン"}
+            {submitting ? "処理中..." : mode === "signup" ? "メールで登録" : "ログイン"}
           </button>
         </form>
 
@@ -330,6 +430,10 @@ export default function AuthPage() {
           type="button"
           onClick={() => {
             setMode(mode === "signup" ? "login" : "signup");
+            setConfirmPassword("");
+            setPasswordMismatch(false);
+            setSignupSubmittedEmail(null);
+            setShowSignupDialog(false);
             setMessage(null);
             setShowConsentError(false);
           }}
@@ -346,6 +450,46 @@ export default function AuthPage() {
           </p>
         )}
       </div>
+
+      {showSignupDialog && mode === "signup" ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 px-4 py-6"
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="signup-dialog-title"
+            aria-describedby="signup-dialog-description"
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#006888]/10 text-2xl font-bold text-[#006888]">
+              ✓
+            </div>
+            <h2 id="signup-dialog-title" className="mt-4 text-center text-lg font-bold text-[#001e43]">
+              登録手続きを受け付けました
+            </h2>
+            <p id="signup-dialog-description" className="mt-3 text-center text-sm leading-6 text-slate-700">
+              確認メールが届いている場合は、メール内のリンクを押して登録を完了してください。
+            </p>
+            <p className="mt-3 break-all rounded-md bg-[#f7f8fa] px-3 py-2 text-center text-sm font-medium text-[#001e43]">
+              {signupSubmittedEmail}
+            </p>
+            <p className="mt-3 text-center text-xs leading-5 text-slate-500">
+              メールが見当たらない場合は迷惑メールフォルダをご確認ください。
+              登録済みのメールアドレスには確認メールが送られない場合があります。
+            </p>
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setShowSignupDialog(false)}
+              className="mt-6 w-full cursor-pointer rounded-md bg-[#001e43] py-2.5 text-sm font-semibold text-white hover:bg-[#022a6b]"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
