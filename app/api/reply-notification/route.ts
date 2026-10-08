@@ -178,6 +178,16 @@ export async function POST(request: Request) {
         subject: `【トクミッケ】${actorUsername}さんがあなたのコメントに返信しました`,
         html: `
           <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0f172a;">
+            <div style="margin:0 0 24px;">
+              <a href="https://www.tokumikke.com" style="text-decoration:none;">
+                <img
+                  src="https://www.tokumikke.com/tokumikke_logo.png"
+                  alt="トクミッケ"
+                  width="150"
+                  style="display:block;width:150px;max-width:100%;height:auto;border:0;"
+                />
+              </a>
+            </div>
             <p>${safeActor}さんが、あなたのコメントに返信しました。</p>
             <p style="font-weight:700;">${safeTitle}</p>
             <div style="margin:16px 0;padding:14px 16px;background:#f7f8fa;border-radius:8px;">

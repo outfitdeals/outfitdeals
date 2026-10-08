@@ -210,6 +210,16 @@ export async function POST(request: Request) {
         subject: `【トクミッケ】${targetType}が通報されました`,
         html: `
           <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.7;color:#0f172a;">
+            <div style="margin:0 0 24px;">
+              <a href="https://www.tokumikke.com" style="text-decoration:none;">
+                <img
+                  src="https://www.tokumikke.com/tokumikke_logo.png"
+                  alt="トクミッケ"
+                  width="150"
+                  style="display:block;width:150px;max-width:100%;height:auto;border:0;"
+                />
+              </a>
+            </div>
             <h2 style="margin:0 0 16px;">新しい通報があります</h2>
             <p><strong>対象:</strong> ${escapeHtml(targetType)}</p>
             <p><strong>理由:</strong> ${escapeHtml(reasonLabel)}</p>
