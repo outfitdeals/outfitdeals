@@ -15,6 +15,7 @@ export const maxDuration = 300;
 
 const MAX_RANK = 100;
 const OPENAI_MODEL = "gpt-5-nano";
+const RUN_LOCK_STALE_MS = 10 * 60 * 1000;
 
 const RANKING_TARGETS = [
   { key: "overall", name: "総合", genreId: undefined },
@@ -198,6 +199,48 @@ export async function GET(request: NextRequest) {
       },
     });
     adminForRunLog = admin;
+
+    const staleBeforeIso = new Date(
+      startedAt - RUN_LOCK_STALE_MS
+    ).toISOString();
+
+    const { data: activeRuns, error: activeRunLookupError } = await admin
+      .from("cron_job_runs")
+      .select("id, started_at, invocation_source")
+      .eq("job_name", "rakuten-auto-post")
+      .eq("status", "running")
+      .gte("started_at", staleBeforeIso)
+      .order("started_at", { ascending: false })
+      .limit(1);
+
+    if (activeRunLookupError) {
+      throw new Error(
+        `自動投稿の実行中チェックに失敗しました: ${activeRunLookupError.message}`
+      );
+    }
+
+    if ((activeRuns ?? []).length > 0) {
+      const activeRun = activeRuns![0];
+
+      return NextResponse.json(
+        {
+          ok: true,
+          posted: false,
+          skipped: true,
+          reason: "ALREADY_RUNNING",
+          activeRunId: activeRun.id,
+          activeRunStartedAt: activeRun.started_at,
+          activeRunInvocationSource: activeRun.invocation_source,
+          elapsedMs: Date.now() - startedAt,
+          message:
+            "楽天自動投稿はすでに実行中のため、今回の実行は開始しませんでした。",
+        },
+        {
+          status: 200,
+          headers: { "Cache-Control": "no-store" },
+        }
+      );
+    }
 
     const { data: runRow, error: runInsertError } = await admin
       .from("cron_job_runs")
