@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { Suspense, useMemo, useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import Link from "next/link";
@@ -1479,10 +1479,22 @@ function PageContent() {
   // Keep pagination in sync with the URL, including navigation via header/footer logos.
   // Next.js may preserve this component when navigating from /?page=3 back to /.
   const urlTopDealsPage = searchParams.get("page");
+  const previousUrlTopDealsPageRef = useRef(urlTopDealsPage);
   useEffect(() => {
     const page = Math.max(1, Number.parseInt(urlTopDealsPage ?? "1", 10) || 1);
     setTopDealsPage(page);
     setTopDealsBatch(1);
+
+    // Header/footer logos navigate from /?page=N to /.
+    // Reset scroll only on that transition, after Next.js updates the route.
+    const previousPage = previousUrlTopDealsPageRef.current;
+    previousUrlTopDealsPageRef.current = urlTopDealsPage;
+    if (previousPage !== null && urlTopDealsPage === null) {
+      const frame = window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
   }, [urlTopDealsPage]);
   const [topDealsBatch, setTopDealsBatch] = useState(1);
   const [likingId, setLikingId] = useState<string | null>(null);
