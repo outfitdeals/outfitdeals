@@ -1475,6 +1475,15 @@ function PageContent() {
     Number.parseInt(searchParams.get("page") ?? "1", 10) || 1
   );
   const [topDealsPage, setTopDealsPage] = useState<number>(initialTopDealsPage);
+
+  // Keep pagination in sync with the URL, including navigation via header/footer logos.
+  // Next.js may preserve this component when navigating from /?page=3 back to /.
+  const urlTopDealsPage = searchParams.get("page");
+  useEffect(() => {
+    const page = Math.max(1, Number.parseInt(urlTopDealsPage ?? "1", 10) || 1);
+    setTopDealsPage(page);
+    setTopDealsBatch(1);
+  }, [urlTopDealsPage]);
   const [topDealsBatch, setTopDealsBatch] = useState(1);
   const [likingId, setLikingId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
