@@ -1454,7 +1454,18 @@ function PageContent() {
 
   const [viewportWidth, setViewportWidth] = useState<number>(1600);
   const [currentPage, setCurrentPage] = useState<number>(0);
-  const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
+  const urlCategory = searchParams.get("category");
+  const categoryFromUrl: CategoryFilter = CATEGORY_TABS.some(
+    (tab) => tab.value === urlCategory
+  )
+    ? (urlCategory as CategoryFilter)
+    : "all";
+  const [activeCategory, setActiveCategory] = useState<CategoryFilter>(categoryFromUrl);
+
+  // Keep category tabs in sync when navigating from a deal's "全て見る" link.
+  useEffect(() => {
+    setActiveCategory(categoryFromUrl);
+  }, [categoryFromUrl]);
 
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [authReady, setAuthReady] = useState(false);
