@@ -170,6 +170,23 @@ function fmtJPDate(dt: string) {
   }
 }
 
+// Supabase REST returns at most 1,000 rows per request by default.
+// Fetch in smaller pages so profile statistics and their underlying lists stay complete.
+async function fetchAllRows(
+  loadPage: (from: number, to: number) => Promise<{ data: any[] | null; error: any }>
+): Promise<{ data: any[]; error: any }> {
+  const pageSize = 500;
+  const result: any[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const page = await loadPage(from, from + pageSize - 1);
+    if (page.error) return { data: [], error: page.error };
+    const rows = page.data ?? [];
+    result.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return { data: result, error: null };
+}
+
 const PLACEHOLDER_IMG = "https://via.placeholder.com/120x120?text=No+Image";
 
 
@@ -554,19 +571,23 @@ function MyPageContent() {
       loadedDealMiniIdsRef.current.add(id);
     });
 
-    const { data, error } = await supabase
-      .from("deals")
-      .select("id, public_id, shop_id, item_id, title, image_url, price, shop_name, is_expired")
-      .in("id", unknown)
-      .eq("moderation_status", "visible");
+    const data: any[] = [];
+    for (let start = 0; start < unknown.length; start += 100) {
+      const batch = unknown.slice(start, start + 100);
+      const { data: chunk, error } = await supabase
+        .from("deals")
+        .select("id, public_id, shop_id, item_id, title, image_url, price, shop_name, is_expired")
+        .in("id", batch)
+        .eq("moderation_status", "visible");
 
-    if (error) {
-      unknown.forEach((id) => {
-        loadedDealMiniIdsRef.current.delete(id);
-      });
-
-      console.warn("load deal minis warn:", error);
-      return;
+      if (error) {
+        unknown.forEach((id) => {
+          loadedDealMiniIdsRef.current.delete(id);
+        });
+        console.warn("load deal minis warn:", error);
+        return;
+      }
+      data.push(...(chunk ?? []));
     }
 
     const patch: Record<string, DealMini> = {};
@@ -594,14 +615,15 @@ function MyPageContent() {
   const loadMyDeals = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(async (from, to) => await supabase
       .from("deals")
       .select(
         "id, public_id, shop_id, item_id, created_at, user_id, title, price, market, shop_name, deal_url, image_url, expires_at, is_expired, likes_count, comments_count"
       )
       .eq("user_id", user.id)
       .eq("moderation_status", "visible")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to));
 
     if (error) {
       console.error("load my deals error:", error);
@@ -636,11 +658,12 @@ function MyPageContent() {
   const loadMyComments = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(async (from, to) => await supabase
       .from("deal_comments")
       .select("id, created_at, body, deal_id")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to));
 
     if (error) {
       console.error("load my comments error:", error);
@@ -667,11 +690,12 @@ function MyPageContent() {
   const loadMyReplies = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(async (from, to) => await supabase
       .from("deal_comment_replies")
       .select("id, created_at, body, comment_id")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to));
 
     if (error) {
       console.error("load my replies error:", error);
@@ -733,11 +757,12 @@ function MyPageContent() {
   const loadMyLikes = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(async (from, to) => await supabase
       .from("deal_likes")
       .select("id, created_at, deal_id")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to));
 
     if (error) {
       console.error("load my likes error:", error);
@@ -763,11 +788,12 @@ function MyPageContent() {
   const loadMyDislikes = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(async (from, to) => await supabase
       .from("deal_dislikes")
       .select("id, created_at, deal_id")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to));
 
     if (error) {
       console.error("load my dislikes error:", error);
@@ -794,16 +820,18 @@ function MyPageContent() {
     if (!user) return;
 
     const [commentReactionResult, replyReactionResult] = await Promise.all([
-      supabase
+      fetchAllRows(async (from, to) => await supabase
         .from("deal_comment_likes")
         .select("id, created_at, comment_id, reaction_type")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
-      supabase
+        .order("created_at", { ascending: false })
+          .range(from, to)),
+      fetchAllRows(async (from, to) => await supabase
         .from("deal_comment_reply_likes")
         .select("id, created_at, reply_id, reaction_type")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+          .range(from, to)),
     ]);
 
     if (commentReactionResult.error) {
@@ -957,35 +985,34 @@ function MyPageContent() {
     const commentIds = myComments.map((comment) => comment.id);
     const replyIds = myReplies.map((reply) => reply.id);
 
-    const [commentLikesResult, replyLikesResult] = await Promise.all([
-      commentIds.length > 0
-        ? supabase
-            .from("deal_comment_likes")
-            .select("id", { count: "exact", head: true })
-            .in("comment_id", commentIds)
-            .in("reaction_type", ["deal", "helpful", "funny"])
-        : Promise.resolve({ count: 0, error: null }),
-      replyIds.length > 0
-        ? supabase
-            .from("deal_comment_reply_likes")
-            .select("id", { count: "exact", head: true })
-            .in("reply_id", replyIds)
-            .in("reaction_type", ["deal", "helpful", "funny"])
-        : Promise.resolve({ count: 0, error: null }),
-    ]);
+    const countPositiveReactions = async (
+      table: "deal_comment_likes" | "deal_comment_reply_likes",
+      column: "comment_id" | "reply_id",
+      ids: string[]
+    ) => {
+      let total = 0;
+      for (let from = 0; from < ids.length; from += 100) {
+        const batch = ids.slice(from, from + 100);
+        const { count, error } = await supabase
+          .from(table)
+          .select("id", { count: "exact", head: true })
+          .in(column, batch)
+          .in("reaction_type", ["deal", "helpful", "funny"]);
+        if (error) throw error;
+        total += Number(count ?? 0);
+      }
+      return total;
+    };
 
-    if (commentLikesResult.error) {
-      console.warn("load received comment likes warn:", commentLikesResult.error);
+    try {
+      const [commentCount, replyCount] = await Promise.all([
+        countPositiveReactions("deal_comment_likes", "comment_id", commentIds),
+        countPositiveReactions("deal_comment_reply_likes", "reply_id", replyIds),
+      ]);
+      setCommentLikesReceived(commentCount + replyCount);
+    } catch (error) {
+      console.warn("load received comment likes warn:", error);
     }
-
-    if (replyLikesResult.error) {
-      console.warn("load received reply likes warn:", replyLikesResult.error);
-    }
-
-    setCommentLikesReceived(
-      Number(commentLikesResult.count ?? 0) +
-        Number(replyLikesResult.count ?? 0)
-    );
   }, [user, myComments, myReplies]);
 
   useEffect(() => {
@@ -997,20 +1024,22 @@ function MyPageContent() {
     if (!user) return;
 
     const [regularResult, moderationResult] = await Promise.all([
-      supabase
+      fetchAllRows(async (from, to) => await supabase
         .from("notifications")
         .select(
           "id, created_at, type, user_id, actor_id, deal_id, comment_id, reply_id, read_at"
         )
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
-      supabase
+        .order("created_at", { ascending: false })
+          .range(from, to)),
+      fetchAllRows(async (from, to) => await supabase
         .from("moderation_notifications")
         .select(
           "id, created_at, user_id, actor_id, deal_id, deal_title, reason_label, details, read_at"
         )
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+          .range(from, to)),
     ]);
 
     if (regularResult.error) {
@@ -1114,11 +1143,12 @@ function MyPageContent() {
   const loadSaved = useCallback(async () => {
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data, error } = await fetchAllRows(async (from, to) => await supabase
       .from("deal_saves")
       .select("id, created_at, deal_id")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to));
 
     if (error) {
       console.warn("load saved deals warn:", error);
