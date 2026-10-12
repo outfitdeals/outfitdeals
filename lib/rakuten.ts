@@ -1760,6 +1760,20 @@ export async function fetchCurrentRakutenSaleRankingItems(params?: {
         ).trim();
 
         detail = [errorCode, errorDescription].filter(Boolean).join(": ");
+
+        // ランキングの末尾ページにデータが存在しない場合、
+        // 取得済みの上位ページを捨てずに次のジャンルへ進む。
+        // その他の404や認証・レート制限・サーバーエラーは従来どおり例外にする。
+        if (
+          res.status === 404 &&
+          errorCode.toLowerCase() === "not_found" &&
+          /Ichiba Ranking API DataNotFound error/i.test(errorDescription)
+        ) {
+          console.warn(
+            `[rakuten] ranking data not found; skipping remaining pages: genreId=${params?.genreId ?? "overall"}, page=${page}, collected=${saleItems.length}`
+          );
+          break;
+        }
       } catch {
         detail = responseText.trim().slice(0, 500);
       }
