@@ -1,8 +1,38 @@
 // app/contact/page.tsx
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import Script from "next/script";
 import Link from "next/link";
+
+type TurnstileWidget = {
+  render: (container: HTMLElement, options: {
+    sitekey: string;
+    callback: (token: string) => void;
+    "expired-callback": () => void;
+    "error-callback": () => void;
+    language: string;
+    theme: string;
+  }) => string;
+  reset: (widgetId: string) => void;
+  remove: (widgetId: string) => void;
+};
+
+declare global {
+  interface Window { turnstile?: TurnstileWidget; }
+}
+
+const MESSAGE_MAX = 300;
+const NAME_MAX = 60;
+const SUBJECT_MAX = 100;
+const SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
+
+const ERROR_MESSAGES: Record<string, string> = {
+  name: "お名前を入力してください。",
+  email: "返信先メールアドレスを入力してください。",
+  subject: "件名を入力してください。",
+  message: "お問い合わせ内容を入力してください。",
+};
 
 type ContactForm = {
   category: string;
@@ -25,17 +55,61 @@ const initialForm: ContactForm = {
 export default function Page() {
   const [form, setForm] = useState<ContactForm>(initialForm);
   const [sending, setSending] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileReady, setTurnstileReady] = useState(false);
+  const turnstileContainer = useRef<HTMLDivElement | null>(null);
+  const turnstileWidgetId = useRef<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
   const [startedAt, setStartedAt] = useState(() => Date.now());
 
+  useEffect(() => {
+    if (!turnstileReady || !SITE_KEY || !window.turnstile || !turnstileContainer.current) return;
+    if (turnstileWidgetId.current !== null) return;
+    const widgetId = window.turnstile.render(turnstileContainer.current, {
+      sitekey: SITE_KEY,
+      callback: setTurnstileToken,
+      "expired-callback": () => setTurnstileToken(""),
+      "error-callback": () => setTurnstileToken(""),
+      language: "ja",
+      theme: "light",
+    });
+    turnstileWidgetId.current = widgetId;
+    return () => {
+      if (turnstileWidgetId.current !== null) {
+        window.turnstile?.remove(turnstileWidgetId.current);
+        turnstileWidgetId.current = null;
+      }
+    };
+  }, [turnstileReady]);
+
   const update = (key: keyof ContactForm, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    setErrors((prev) => ({ ...prev, [key]: "" }));
+  };
+
+  const validate = () => {
+    const next: Record<string, string> = {};
+    for (const key of ["name", "email", "subject", "message"] as const) {
+      if (!form[key].trim()) next[key] = ERROR_MESSAGES[key];
+    }
+    if (form.name.trim().length > NAME_MAX) next.name = `お名前は${NAME_MAX}文字以内で入力してください。`;
+    if (form.email.trim().length > 254) next.email = "メールアドレスは254文字以内で入力してください。";
+    else if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) next.email = "正しいメールアドレスを入力してください。";
+    if (form.subject.trim().length > SUBJECT_MAX) next.subject = `件名は${SUBJECT_MAX}文字以内で入力してください。`;
+    if (form.message.trim().length > MESSAGE_MAX) next.message = `お問い合わせ内容は${MESSAGE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`;
+    if (!SITE_KEY) next.turnstile = "現在フォームを利用できません。運営者にお問い合わせください。";
+    else if (!turnstileToken) next.turnstile = "BOT確認が完了するまでお待ちください。";
+    setErrors(next);
+    const first = Object.keys(next)[0];
+    if (first && first !== "turnstile") document.getElementById(`contact-${first}`)?.focus();
+    return Object.keys(next).length === 0;
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (sending) return;
+    if (sending || !validate()) return;
     setSending(true);
     setError("");
     setSuccess(false);
@@ -44,7 +118,7 @@ export default function Page() {
       const response = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, startedAt }),
+        body: JSON.stringify({ ...form, startedAt, turnstileToken }),
       });
       const result: { ok?: boolean; error?: string } = await response.json();
       if (!response.ok || !result.ok) {
@@ -53,9 +127,13 @@ export default function Page() {
       setForm(initialForm);
       setStartedAt(Date.now());
       setSuccess(true);
+      setTurnstileToken("");
+      if (turnstileWidgetId.current !== null) window.turnstile?.reset(turnstileWidgetId.current);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "送信に失敗しました。");
     } finally {
+      setTurnstileToken("");
+      if (turnstileWidgetId.current !== null) window.turnstile?.reset(turnstileWidgetId.current);
       setSending(false);
     }
   };
@@ -65,6 +143,11 @@ export default function Page() {
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
+      <Script
+        src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+        strategy="afterInteractive"
+        onReady={() => setTurnstileReady(true)}
+      />
       <div className="rounded-2xl border border-slate-200 bg-white px-5 py-7 shadow-sm sm:px-10 sm:py-10">
         <div className="mb-8 border-b border-slate-200 pb-6">
           <h1 className="text-2xl font-bold tracking-tight text-[#001e43] sm:text-3xl">
@@ -97,7 +180,7 @@ export default function Page() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-5" noValidate={false}>
+            <form onSubmit={handleSubmit} className="space-y-5" noValidate>
               <div className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
                 <label htmlFor="contact-website">Website</label>
                 <input id="contact-website" name="website" type="text" tabIndex={-1} autoComplete="off" value={form.website} onChange={(event) => update("website", event.target.value)} />
@@ -115,20 +198,29 @@ export default function Page() {
               </div>
               <div>
                 <label htmlFor="contact-name" className="text-sm font-semibold text-slate-900">お名前 <span className="text-red-600">*</span></label>
-                <input id="contact-name" type="text" required maxLength={100} autoComplete="name" className={fieldClass} value={form.name} onChange={(event) => update("name", event.target.value)} placeholder="お名前をご入力ください" />
+                <input id="contact-name" type="text" maxLength={NAME_MAX} autoComplete="name" className={fieldClass} value={form.name} onChange={(event) => update("name", event.target.value)} placeholder="お名前をご入力ください" />
+                {errors.name && <p role="alert" className="mt-1 text-xs text-red-700">{errors.name}</p>}
               </div>
               <div>
                 <label htmlFor="contact-email" className="text-sm font-semibold text-slate-900">返信先メールアドレス <span className="text-red-600">*</span></label>
-                <input id="contact-email" type="email" required maxLength={254} autoComplete="email" className={fieldClass} value={form.email} onChange={(event) => update("email", event.target.value)} placeholder="example@gmail.com" />
+                <input id="contact-email" type="email" maxLength={254} autoComplete="email" className={fieldClass} value={form.email} onChange={(event) => update("email", event.target.value)} placeholder="example@gmail.com" />
+                {errors.email && <p role="alert" className="mt-1 text-xs text-red-700">{errors.email}</p>}
               </div>
               <div>
                 <label htmlFor="contact-subject" className="text-sm font-semibold text-slate-900">件名 <span className="text-red-600">*</span></label>
-                <input id="contact-subject" type="text" required maxLength={150} className={fieldClass} value={form.subject} onChange={(event) => update("subject", event.target.value)} placeholder="お問い合わせの件名" />
+                <input id="contact-subject" type="text" maxLength={SUBJECT_MAX} className={fieldClass} value={form.subject} onChange={(event) => update("subject", event.target.value)} placeholder="お問い合わせの件名" />
+                {errors.subject && <p role="alert" className="mt-1 text-xs text-red-700">{errors.subject}</p>}
               </div>
               <div>
                 <label htmlFor="contact-message" className="text-sm font-semibold text-slate-900">お問い合わせ内容 <span className="text-red-600">*</span></label>
-                <textarea id="contact-message" required rows={8} maxLength={5000} className={fieldClass} value={form.message} onChange={(event) => update("message", event.target.value)} placeholder="お問い合わせ内容をご入力ください" />
-                <p className="mt-1 text-right text-xs text-slate-500">{form.message.length} / 5,000文字</p>
+                <textarea id="contact-message" rows={6} maxLength={MESSAGE_MAX} className={fieldClass} value={form.message} onChange={(event) => update("message", event.target.value)} placeholder="お問い合わせ内容をご入力ください" />
+                {errors.message && <p role="alert" className="mt-1 text-xs text-red-700">{errors.message}</p>}
+                <p className="mt-1 text-right text-xs text-slate-500">{form.message.length} / {MESSAGE_MAX.toLocaleString("ja-JP")}文字</p>
+              </div>
+              <div>
+                <div ref={turnstileContainer} />
+                {errors.turnstile && <p role="alert" className="mt-1 text-xs text-red-700">{errors.turnstile}</p>}
+                <p className="mt-2 text-xs text-slate-500">安全な送信のため、BOT確認を行っています。</p>
               </div>
               <p className="text-xs leading-6 text-slate-600">
                 ご入力いただいた情報はお問い合わせへの対応に利用します。詳細は
