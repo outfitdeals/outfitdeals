@@ -2206,37 +2206,143 @@ function PageContent() {
       // まずDeal本体だけでカードを即表示する。
       // プロフィール・いいね等の補助情報を待たせない。
       const initialSorted = sortRows(baseRows);
-      const initialRecommended = shuffle(baseRows).slice(0, 15);
-      const recommendedIds = initialRecommended.map((row) => row.id);
-
       setTopDeals(initialSorted);
-      setRecommendDeals(initialRecommended);
 
       // 投稿者情報は第2段階で反映。
       const withAuthors = await attachAuthorUsername(baseRows);
       setTopDeals(sortRows(withAuthors));
 
-      const authorById = new Map(withAuthors.map((row) => [row.id, row]));
-      setRecommendDeals(
-        recommendedIds
-          .map((id) => authorById.get(id))
-          .filter((row): row is DealsRow => Boolean(row))
-      );
-
       // いいね・低評価・保存・コメント済み等は最後に反映。
-      // ここが遅くても、カード自体はすでに表示されている。
       const withFlags = await attachInteractionFlags(withAuthors, userId);
       setTopDeals(sortRows(withFlags));
-
-      const flagsById = new Map(withFlags.map((row) => [row.id, row]));
-      setRecommendDeals(
-        recommendedIds
-          .map((id) => flagsById.get(id))
-          .filter((row): row is DealsRow => Boolean(row))
-      );
     },
     [attachAuthorUsername, attachInteractionFlags]
   );
+
+  // 「あなたにおすすめ」はカテゴリごとにDBから候補を選ぶ。
+  // 全ジャンル共通の15件を選んだあとにフィルタすると0～数件になるため、
+  // カテゴリで絞った母集団から毎回ランダムに15件抽出する。
+  useEffect(() => {
+    if (!authReady) return;
+
+    let cancelled = false;
+    setRecommendDeals([]);
+    setCurrentPage(0);
+
+    const loadRecommendations = async () => {
+      const userId = currentUserIdRef.current;
+      const selectColumns = `
+        id, public_id, shop_id, item_id, created_at, user_id,
+        title, price, orig_price, market, shop_name, deal_url,
+        image_url, likes_count, comments_count, comment, is_expired,
+        category, brand, free_shipping, expires_at
+      `;
+
+      const baseQuery = () => {
+        let query = supabase
+          .from("deals")
+          .select(selectColumns)
+          .eq("moderation_status", "visible")
+          .eq("is_expired", false);
+        if (activeCategory !== "all") {
+          query = query.eq("category", activeCategory);
+        }
+        return query;
+      };
+
+      let countQuery = supabase
+        .from("deals")
+        .select("id", { count: "exact", head: true })
+        .eq("moderation_status", "visible")
+        .eq("is_expired", false);
+      if (activeCategory !== "all") {
+        countQuery = countQuery.eq("category", activeCategory);
+      }
+
+      const { count, error: countError } = await countQuery;
+      if (cancelled) return;
+      if (countError) {
+        console.warn("recommendation count error:", countError);
+        return;
+      }
+      const total = count ?? 0;
+      if (total === 0) return;
+
+      // 全件取得による重い通信を避け、ランダムな位置から候補を取得。
+      // 2つの独立した区間から最大80件ずつ候補を集める。
+      const windowSize = Math.min(total, 80);
+      const firstStart = Math.floor(Math.random() * (total - windowSize + 1));
+      const secondStart = Math.floor(Math.random() * (total - windowSize + 1));
+      const ranges = total <= windowSize
+        ? [0]
+        : [firstStart, secondStart];
+      const results = await Promise.all(
+        ranges.map((from) =>
+          baseQuery()
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: false })
+            .range(from, from + windowSize - 1)
+        )
+      );
+      if (cancelled) return;
+      if (results.some((result) => result.error)) {
+        console.warn("recommendation load error:", results.find((result) => result.error)?.error);
+        return;
+      }
+
+      const unique = Array.from(
+        new Map(results.flatMap((result) => result.data ?? []).map((row: any) => [String(row.id), row])).values()
+      );
+      const selected = shuffle(unique).slice(0, 15).map((row: any) => ({
+        id: String(row.id),
+        public_id: row.public_id != null ? Number(row.public_id) : null,
+        shop_id: row.shop_id ?? null,
+        item_id: row.item_id ?? null,
+        created_at: row.created_at,
+        user_id: row.user_id,
+        title: row.title,
+        price: row.price,
+        orig_price: row.orig_price,
+        market: row.market,
+        shop_name: row.shop_name,
+        deal_url: row.deal_url,
+        image_url: row.image_url,
+        likes_count: row.likes_count,
+        comments_count: row.comments_count,
+        comment: row.comment,
+        is_expired: row.is_expired,
+        category: row.category ?? null,
+        brand: row.brand ?? null,
+        free_shipping: row.free_shipping ?? false,
+        expires_at: row.expires_at ?? null,
+        author_username: null,
+        author_avatar_url: null,
+        has_liked: false,
+        has_disliked: false,
+        has_commented: false,
+        has_saved: false,
+      })) as DealsRow[];
+
+      if (cancelled) return;
+      setRecommendDeals(selected);
+
+      // 従来と同じように、表示後に投稿者とリアクションを補完する。
+      const withAuthors = await attachAuthorUsername(selected);
+      if (cancelled) return;
+      setRecommendDeals(withAuthors);
+      const withFlags = await attachInteractionFlags(withAuthors, userId);
+      if (cancelled) return;
+      setRecommendDeals(withFlags);
+    };
+
+    void loadRecommendations().catch((error) => {
+      if (!cancelled) console.error("recommendation unexpected error:", error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, activeCategory, attachAuthorUsername, attachInteractionFlags]);
 
   const loadSearchDeals = useCallback(
     async (userId: string | null) => {
