@@ -13,7 +13,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { likeDeal } from "@/lib/dealActions";
 import { yen } from "@/app/components/DealUI";
 
-type RelatedDeal = {
+export type RelatedDeal = {
   id: string;
   public_id: number | null;
   shop_id: string | null;
@@ -68,9 +68,17 @@ function detailUrl(d: RelatedDeal) {
   return `/deals/${d.public_id}${suffix ? `-${suffix}` : ""}`;
 }
 
-export default function RelatedCategoryDeals({ dealId }: { dealId: string }) {
-  const [category, setCategory] = useState<string | null>(null);
-  const [deals, setDeals] = useState<RelatedDeal[]>([]);
+export default function RelatedCategoryDeals({
+  dealId,
+  initialCategory,
+  initialDeals,
+}: {
+  dealId: string;
+  initialCategory: string | null;
+  initialDeals: RelatedDeal[];
+}) {
+  const [category, setCategory] = useState<string | null>(initialCategory);
+  const [deals, setDeals] = useState<RelatedDeal[]>(initialDeals);
   const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<string[]>([]);
@@ -96,60 +104,13 @@ export default function RelatedCategoryDeals({ dealId }: { dealId: string }) {
     };
   }, []);
 
+  // Server-rendered related links are available in the initial HTML for crawlers.
+  // Keep interactive likes, comments and horizontal scrolling client-side.
   useEffect(() => {
-    let active = true;
-    setCategory(null);
-    setDeals([]);
+    setCategory(initialCategory);
+    setDeals(initialDeals);
     setCardStates({});
-
-    (async () => {
-      const { data: current, error: categoryError } = await supabase
-        .from("deals")
-        .select("category")
-        .eq("id", dealId)
-        .maybeSingle();
-
-      if (!active) return;
-
-      if (categoryError || !current?.category) {
-        if (categoryError) {
-          console.warn("related deals category load warn:", categoryError);
-        }
-        return;
-      }
-
-      const selected: string = current.category;
-      if (!Object.prototype.hasOwnProperty.call(CATEGORIES, selected)) return;
-
-      setCategory(selected);
-
-      const { data, error } = await supabase
-        .from("deals")
-        .select(
-          "id, public_id, shop_id, item_id, title, image_url, price, orig_price, market, shop_name, created_at, likes_count, comments_count"
-        )
-        .eq("category", selected)
-        .eq("moderation_status", "visible")
-        .eq("is_expired", false)
-        .neq("id", dealId)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .limit(21);
-
-      if (!active) return;
-
-      if (error) {
-        console.warn("related category deals warn:", error);
-        return;
-      }
-
-      setDeals((data ?? []) as RelatedDeal[]);
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [dealId]);
+  }, [dealId, initialCategory, initialDeals]);
 
   const refreshCardStates = useCallback(async () => {
     if (!deals.length) return;

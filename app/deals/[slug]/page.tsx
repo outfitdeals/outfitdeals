@@ -3,6 +3,7 @@ import { cache } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { notFound, permanentRedirect } from "next/navigation";
 import DealDetailClient, { type DealRow } from "./DealDetailClient";
+import type { RelatedDeal } from "./RelatedCategoryDeals";
 
 type PageProps = {
   params: Promise<{
@@ -251,6 +252,49 @@ async function decorateDeal(
   } as DealRow;
 }
 
+// Query related products on the server so links are present in the initial HTML.
+// The affiliate outbound URL and CTA are intentionally untouched.
+async function loadInitialRelatedDeals(
+  supabase: ReturnType<typeof getSupabase>,
+  dealId: string
+): Promise<{ category: string | null; deals: RelatedDeal[] }> {
+  const { data: current, error: categoryError } = await supabase
+    .from("deals")
+    .select("category")
+    .eq("id", dealId)
+    .maybeSingle();
+
+  if (categoryError || !current?.category) {
+    if (categoryError) console.warn("related deals category load warn:", categoryError);
+    return { category: null, deals: [] };
+  }
+
+  const category = String(current.category);
+  const allowed = new Set([
+    "fashion_women", "fashion_men", "food", "beauty", "home",
+    "interior", "electronics", "sports", "shoes", "other",
+  ]);
+  if (!allowed.has(category)) return { category: null, deals: [] };
+
+  const { data, error } = await supabase
+    .from("deals")
+    .select("id, public_id, shop_id, item_id, title, image_url, price, orig_price, market, shop_name, created_at, likes_count, comments_count")
+    .eq("category", category)
+    .eq("moderation_status", "visible")
+    .eq("is_expired", false)
+    .neq("id", dealId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(21);
+
+  if (error) {
+    console.warn("related category deals warn:", error);
+    return { category, deals: [] };
+  }
+
+  return { category, deals: (data ?? []) as RelatedDeal[] };
+}
+
 export default async function DealPage({ params }: PageProps) {
   const { slug } = await params;
 
@@ -285,10 +329,10 @@ export default async function DealPage({ params }: PageProps) {
     permanentRedirect(canonicalPath);
   }
 
-  const initialDeal = await decorateDeal(
-    supabase,
-    data as Record<string, any>
-  );
+  const [initialDeal, related] = await Promise.all([
+    decorateDeal(supabase, data as Record<string, any>),
+    loadInitialRelatedDeals(supabase, String(data.id)),
+  ]);
 
-  return <DealDetailClient initialDeal={initialDeal} />;
+  return <DealDetailClient initialDeal={initialDeal} initialRelatedCategory={related.category} initialRelatedDeals={related.deals} />;
 }

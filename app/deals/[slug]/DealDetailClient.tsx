@@ -31,7 +31,7 @@ import {
 import RightSidebar, { type SidebarDeal } from "@/app/components/RightSidebar";
 import { MarketTag, yen } from "@/app/components/DealUI";
 import ViewTracker from "@/app/components/ViewTracker";
-import RelatedCategoryDeals from "./RelatedCategoryDeals";
+import RelatedCategoryDeals, { type RelatedDeal } from "./RelatedCategoryDeals";
 import { likeDeal, saveDeal } from "@/lib/dealActions";
 
 export type DealRow = {
@@ -595,7 +595,15 @@ function CommentReactionPicker({
   );
 }
 
-export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }) {
+export default function DealDetailPage({
+  initialDeal,
+  initialRelatedCategory,
+  initialRelatedDeals,
+}: {
+  initialDeal: DealRow;
+  initialRelatedCategory: string | null;
+  initialRelatedDeals: RelatedDeal[];
+}) {
   const params = useParams<{ slug: string }>();
   const routeKey = typeof params?.slug === "string" ? params.slug : "";
 
@@ -4259,7 +4267,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
           )}
           {deal && !loading && !errorMsg ? (
             <div className="mt-5 w-full min-w-0">
-              <RelatedCategoryDeals dealId={deal.id} />
+              <RelatedCategoryDeals dealId={deal.id} initialCategory={initialRelatedCategory} initialDeals={initialRelatedDeals} />
             </div>
           ) : null}
         </main>
@@ -5104,7 +5112,7 @@ export default function DealDetailPage({ initialDeal }: { initialDeal: DealRow }
               )}
               {deal && !loading && !errorMsg ? (
                 <div className="mt-7 w-full min-w-0 max-w-full">
-                  <RelatedCategoryDeals dealId={deal.id} />
+                  <RelatedCategoryDeals dealId={deal.id} initialCategory={initialRelatedCategory} initialDeals={initialRelatedDeals} />
                 </div>
               ) : null}
             </section>
