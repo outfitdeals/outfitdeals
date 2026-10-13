@@ -1,5 +1,4 @@
-
- // app/layout.tsx
+// app/layout.tsx
 
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
@@ -59,6 +58,14 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ja" className="h-full bg-[#f7f8fa]">
+      <head>
+        <meta name="google-adsense-account" content="ca-pub-4625125338820660" />
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4625125338820660"
+          crossOrigin="anonymous"
+        ></script>
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} flex min-h-full flex-col bg-[#f7f8fa] antialiased`}
       >
@@ -79,13 +86,6 @@ export default function RootLayout({
             gtag('config', 'G-3QPV34K0W3');
           `}
         </Script>
-
-        <Script
-          async
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4625125338820660"
-          crossOrigin="anonymous"
-          strategy="beforeInteractive"
-        />
 
         <Suspense fallback={null}>
           <SiteHeader />
