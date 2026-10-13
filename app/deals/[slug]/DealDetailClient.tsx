@@ -32,6 +32,7 @@ import RightSidebar, { type SidebarDeal } from "@/app/components/RightSidebar";
 import { MarketTag, yen } from "@/app/components/DealUI";
 import ViewTracker from "@/app/components/ViewTracker";
 import RelatedCategoryDeals, { type RelatedDeal } from "./RelatedCategoryDeals";
+import MobileSpotlightDeals from "./MobileSpotlightDeals";
 import { likeDeal, saveDeal } from "@/lib/dealActions";
 
 export type DealRow = {
@@ -4269,6 +4270,15 @@ export default function DealDetailPage({
             <div className="mt-5 w-full min-w-0">
               <RelatedCategoryDeals dealId={deal.id} initialCategory={initialRelatedCategory} initialDeals={initialRelatedDeals} />
             </div>
+          ) : null}
+          {deal && !loading && !errorMsg ? (
+            <MobileSpotlightDeals
+              popular={popular}
+              trending={trending}
+              endingSoon={endingSoon}
+              onLike={handleSidebarLike}
+              onShare={handleSidebarShare}
+            />
           ) : null}
         </main>
 
