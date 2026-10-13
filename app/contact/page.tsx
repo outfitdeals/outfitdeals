@@ -22,6 +22,21 @@ declare global {
   interface Window { turnstile?: TurnstileWidget; }
 }
 
+// メールアドレスの基本形式を画面・サーバー側で共通基準として検証します。
+// 実在する受信箱かどうかは、形式検証だけでは確認できません。
+function isValidContactEmail(value: string): boolean {
+  if (value.length > 254 || /[\s\u3000]/.test(value)) return false;
+  const parts = value.split("@");
+  if (parts.length !== 2) return false;
+  const [local, domain] = parts;
+  if (!local || local.length > 64 || !/^[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+$/.test(local)) return false;
+  if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return false;
+  if (domain.length > 253 || !domain.includes(".")) return false;
+  const labels = domain.split(".");
+  if (labels.some((label) => !label || label.length > 63 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))) return false;
+  return /^[A-Za-z]{2,63}$/.test(labels[labels.length - 1]);
+}
+
 const MESSAGE_MAX = 300;
 const NAME_MAX = 60;
 const SUBJECT_MAX = 100;
@@ -96,7 +111,7 @@ export default function Page() {
     }
     if (form.name.trim().length > NAME_MAX) next.name = `お名前は${NAME_MAX}文字以内で入力してください。`;
     if (form.email.trim().length > 254) next.email = "メールアドレスは254文字以内で入力してください。";
-    else if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) next.email = "正しいメールアドレスを入力してください。";
+    else if (form.email.trim() && !isValidContactEmail(form.email.trim())) next.email = "メールアドレスの形式を確認してください。";
     if (form.subject.trim().length > SUBJECT_MAX) next.subject = `件名は${SUBJECT_MAX}文字以内で入力してください。`;
     if (form.message.trim().length > MESSAGE_MAX) next.message = `お問い合わせ内容は${MESSAGE_MAX.toLocaleString("ja-JP")}文字以内で入力してください。`;
     if (!SITE_KEY) next.turnstile = "現在フォームを利用できません。運営者にお問い合わせください。";
@@ -171,7 +186,7 @@ export default function Page() {
 
             {success && (
               <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                お問い合わせを受け付けました。ご連絡ありがとうございます。
+                お問い合わせを受け付けました。
               </div>
             )}
             {error && (

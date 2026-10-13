@@ -4,6 +4,21 @@ import { createHash } from "node:crypto";
 
 export const runtime = "nodejs";
 
+// メールアドレスの基本形式を画面・サーバー側で共通基準として検証します。
+// 実在する受信箱かどうかは、形式検証だけでは確認できません。
+function isValidContactEmail(value: string): boolean {
+  if (value.length > 254 || /[\s\u3000]/.test(value)) return false;
+  const parts = value.split("@");
+  if (parts.length !== 2) return false;
+  const [local, domain] = parts;
+  if (!local || local.length > 64 || !/^[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+$/.test(local)) return false;
+  if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return false;
+  if (domain.length > 253 || !domain.includes(".")) return false;
+  const labels = domain.split(".");
+  if (labels.some((label) => !label || label.length > 63 || !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))) return false;
+  return /^[A-Za-z]{2,63}$/.test(labels[labels.length - 1]);
+}
+
 const MESSAGE_MAX = 300;
 const NAME_MAX = 60;
 const SUBJECT_MAX = 100;
@@ -112,7 +127,7 @@ export async function POST(request: NextRequest) {
     !categories[category] ||
     !name || name.length > NAME_MAX ||
     !email || email.length > 254 ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+    !isValidContactEmail(email) ||
     !subject || subject.length > SUBJECT_MAX ||
     !message || message.length > MESSAGE_MAX
   ) {
