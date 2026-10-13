@@ -9,6 +9,7 @@ export default function Page() {
             プライバシーポリシー
           </h1>
           <p className="mt-3 text-xs text-slate-500">制定日：2026年9月16日</p>
+          <p className="mt-1 text-xs text-slate-500">更新日：2026年10月13日</p>
         </div>
 
         <div className="space-y-9">
@@ -46,6 +47,15 @@ export default function Page() {
             <h2 className="text-lg font-bold text-slate-900">6. Cookie等</h2>
             <div className="space-y-3 text-sm leading-7 text-slate-700 sm:text-[15px]">
               <p>本サービスでは、ログイン状態の維持、セキュリティ確保、利用状況の把握、サービス改善、アフィリエイト等のため、Cookie、ローカルストレージその他類似の技術を使用する場合があります。</p>
+            </div>
+          </section>
+          <section className="space-y-3">
+            <h2 className="text-lg font-bold text-slate-900">6-2. Google AdSenseによる広告配信</h2>
+            <div className="space-y-3 text-sm leading-7 text-slate-700 sm:text-[15px]">
+              <p>本サービスでは、第三者配信の広告サービス「Google AdSense」を利用する場合があります。Googleを含む第三者配信事業者は、Cookieその他の識別技術を使用して、本サービスや他のウェブサイトへの過去のアクセス情報に基づいた広告を配信する場合があります。</p>
+              <p>Googleは広告Cookieを利用し、本サービスまたは他のウェブサイトへのアクセス情報に基づいて、Googleおよびそのパートナーが広告を表示することがあります。また、広告配信に伴い、第三者が利用者のブラウザにCookieを保存・読み取りし、ウェブビーコン、IPアドレス等を利用して情報を収集する場合があります。</p>
+              <p>利用者は、Googleの<Link href="https://myadcenter.google.com/" target="_blank" rel="noopener noreferrer" className="cursor-pointer text-[#006888] underline hover:text-[#001e43]">マイ アド センター</Link>で、Googleによるパーソナライズ広告の設定・無効化を行えます。第三者配信事業者のパーソナライズ広告については、<Link href="https://www.aboutads.info/choices/" target="_blank" rel="noopener noreferrer" className="cursor-pointer text-[#006888] underline hover:text-[#001e43]">YourAdChoices</Link>でも一部の設定を変更できます。なお、パーソナライズ広告を無効にしても、広告自体が表示されなくなるわけではありません。</p>
+              <p>Googleがパートナーサイト等から取得した情報をどのように利用するかについては、<Link href="https://policies.google.com/technologies/partner-sites?hl=ja" target="_blank" rel="noopener noreferrer" className="cursor-pointer text-[#006888] underline hover:text-[#001e43]">Googleのポリシーと規約</Link>をご確認ください。</p>
             </div>
           </section>
           <section className="space-y-3">
