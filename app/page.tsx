@@ -6,6 +6,7 @@ import { MessageSquare, ThumbsUp, Bookmark, SlidersHorizontal, Grid2X2, LayoutLi
 import { supabase } from "@/lib/supabaseClient";
 import { useSearchParams } from "next/navigation";
 import RightSidebar, { type SidebarDeal } from "@/app/components/RightSidebar";
+import MobileSpotlightDeals from "./deals/[slug]/MobileSpotlightDeals";
 import { MarketTag, yen } from "@/app/components/DealUI";
 import { likeDeal, saveDeal } from "@/lib/dealActions";
 
@@ -4027,6 +4028,21 @@ function PageContent() {
               </div>
             </div>
           </section>
+
+          <MobileSpotlightDeals
+            popular={sidePopularVM}
+            trending={sideTrendingVM}
+            endingSoon={sideEndingSoonVM}
+            onLike={handleLikeAny}
+            onShare={(id) => {
+              const deal = [
+                ...sidePopularVM,
+                ...sideTrendingVM,
+                ...sideEndingSoonVM,
+              ].find((item) => item.id === id);
+              void handleShareDeal(deal?.detailUrl ?? `/deals/${id}`, deal?.title);
+            }}
+          />
 
           <section className="mt-6">
             <div className="px-4">
