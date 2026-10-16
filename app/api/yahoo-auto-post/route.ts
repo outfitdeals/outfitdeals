@@ -40,6 +40,7 @@ type DealCategory =
 type CategoryNode = { id: number; name: string };
 type YahooHit = {
   name?: string;
+  description?: string;
   price?: number | string;
   url?: string;
   code?: string;
@@ -52,6 +53,7 @@ type YahooHit = {
 type Candidate = {
   category: DealCategory;
   title: string;
+  description: string | null;
   price: number;
   shopId: string;
   itemId: string;
@@ -92,9 +94,27 @@ type ExistingYahooDeal = {
   item_id: string | null;
   source_url: string | null;
   deal_url: string | null;
+  source_sale_started_at: string | null;
+  source_sale_ends_at: string | null;
 };
 
-async function loadExistingYahooProductKeys(): Promise<{ keys: Set<string>; rowsScanned: number }> {
+// DBのtimestamptz値をUTCに統一し、候補商品と同じ基準で照合する。
+function normalizedSaleTime(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
+function yahooSaleKey(productKey: string, start: string, end: string): string {
+  return JSON.stringify([productKey, start, end]);
+}
+
+async function loadExistingYahooSaleKeys(): Promise<{
+  saleKeys: Set<string>;
+  legacyProductKeys: Set<string>;
+  productKeys: Set<string>;
+  rowsScanned: number;
+}> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
@@ -104,15 +124,16 @@ async function loadExistingYahooProductKeys(): Promise<{ keys: Set<string>; rows
   const db = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const keys = new Set<string>();
+  const saleKeys = new Set<string>();
+  const legacyProductKeys = new Set<string>();
+  const productKeys = new Set<string>();
   let rowsScanned = 0;
   const pageSize = 1000;
-  // Yahoo!の可能性がある投稿をサーバー側で絞る。楽天・Amazonは除外する。
-  // 旧投稿ではmarket_codeがなくてもsource_urlから判定できる。
+  // Yahoo!の既存投稿のみ取得。旧投稿は商品URLからも照合する。
   for (let start = 0; start < 50000; start += pageSize) {
     const { data, error } = await db
       .from("deals")
-      .select("market_code,shop_id,item_id,source_url,deal_url")
+      .select("market_code,shop_id,item_id,source_url,deal_url,source_sale_started_at,source_sale_ends_at")
       .or("market_code.eq.yh,market.eq.Yahoo!ショッピング,source_url.ilike.*store.shopping.yahoo.co.jp*")
       .order("id", { ascending: true })
       .range(start, start + pageSize - 1);
@@ -120,15 +141,24 @@ async function loadExistingYahooProductKeys(): Promise<{ keys: Set<string>; rows
     const rows = (data ?? []) as ExistingYahooDeal[];
     rowsScanned += rows.length;
     for (const row of rows) {
-      if (row.market_code?.toLowerCase() === "yh" && row.shop_id && row.item_id) {
-        keys.add(`${row.shop_id}:${row.item_id}`.toLowerCase());
-      }
       const fromSource = yahooProductKeyFromUrl(row.source_url);
       const fromDeal = yahooProductKeyFromUrl(row.deal_url);
-      if (fromSource) keys.add(fromSource);
-      if (fromDeal) keys.add(fromDeal);
+      const productKey = row.market_code?.toLowerCase() === "yh" && row.shop_id && row.item_id
+        ? `${row.shop_id}:${row.item_id}`.toLowerCase()
+        : fromSource ?? fromDeal;
+      if (!productKey) continue;
+      productKeys.add(productKey);
+
+      const saleStart = normalizedSaleTime(row.source_sale_started_at);
+      const saleEnd = normalizedSaleTime(row.source_sale_ends_at);
+      if (saleStart && saleEnd) {
+        saleKeys.add(yahooSaleKey(productKey, saleStart, saleEnd));
+      } else {
+        // セール期間不明の旧投稿は安全優先で商品単位で除外する。
+        legacyProductKeys.add(productKey);
+      }
     }
-    if (rows.length < pageSize) return { keys, rowsScanned };
+    if (rows.length < pageSize) return { saleKeys, legacyProductKeys, productKeys, rowsScanned };
   }
   // 途中までの一覧では「重複なし」を保証できないため、誤投稿を避けて失敗扱いにする。
   throw new Error("Yahoo!既投稿が50,000件に達したため全件確認できませんでした。");
@@ -264,6 +294,28 @@ type LookupResult =
   | { candidate: Candidate; reason: null }
   | { candidate: null; reason: RejectionReason };
 
+// APIが返す商品説明はHTMLを描画せず、プレーンテキストとして保存する。
+// 説明がない場合は作り話で埋めずnullにする。
+function cleanYahooDescription(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\s*\/(?:p|div|li)\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '\"')
+    .replace(/&#(?:39|x27);/gi, "'")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text ? text.slice(0, 2000) : null;
+}
+
 function validateHit(hit: YahooHit, category: DealCategory, nowSeconds: number): LookupResult {
   const price = Number(hit.price);
   const start = Number(hit.priceLabel?.periodStart);
@@ -307,7 +359,7 @@ function validateHit(hit: YahooHit, category: DealCategory, nowSeconds: number):
   const shippingCode = Number(hit.shipping?.code);
   return {
     candidate: {
-      category, title: hit.name.trim(), price, shopId, itemId,
+      category, title: hit.name.trim(), description: cleanYahooDescription(hit.description), price, shopId, itemId,
       shopName: hit.seller?.name ?? shopId,
       itemUrl: `https://store.shopping.yahoo.co.jp/${shopId}/${itemId}.html`,
       imageUrl,
@@ -376,6 +428,7 @@ async function fetchRanking(appId: string, genreId: number) {
 // 旧V1 APIのJSONは "0" キーを含むことがあるため、両形式を許容する。
 type LookupHit = {
   Name?: string;
+  Description?: string;
   Url?: string;
   Price?: number | string | { "#text"?: string; _content?: string; _value?: string | number };
   PriceLabel?: { PeriodStart?: string; PeriodEnd?: string };
@@ -422,6 +475,7 @@ async function lookupRankedItem(appId: string, code: string, category: DealCateg
     ? Number(rawPrice._value ?? rawPrice["#text"] ?? rawPrice._content) : Number(rawPrice);
   return validateHit({
     name: raw.Name,
+    description: raw.Description,
     url: raw.Url?.replace(/^http:\/\//i, "https://"),
     code, price,
     image: {
@@ -456,6 +510,97 @@ async function fetchCategory(appId: string, category: DealCategory, genreId: num
   const json = (await response.json()) as { hits?: YahooHit[] };
   const hits = Array.isArray(json.hits) ? json.hits : [];
   return { scanned: hits.length, candidates: hits.map((hit) => normalize(hit, category, nowSeconds)).filter((x): x is Candidate => x !== null) };
+}
+
+
+// After ranking/dedup selection, independently verify the affiliate destination
+// for each selected product. Never accept a link belonging to a different item.
+type AffiliateResponse = {
+  hits?: Array<{ code?: string; url?: string; seller?: { sellerId?: string } }>;
+};
+
+function vcAffiliateId(): string {
+  const sid = process.env.VALUECOMMERCE_SID?.trim();
+  const pid = process.env.VALUECOMMERCE_PID?.trim();
+  if (!sid || !pid || !/^\d+$/.test(sid) || !/^\d+$/.test(pid)) {
+    throw new Error("VALUECOMMERCE_SID / VALUECOMMERCE_PID are missing or invalid");
+  }
+  return `https://ck.jp.ap.valuecommerce.com/servlet/referral?sid=${sid}&pid=${pid}&vc_url=`;
+}
+
+function verifiedAffiliateUrl(rawAffiliateUrl: string | undefined, item: Candidate): string | null {
+  if (!rawAffiliateUrl) return null;
+  try {
+    const link = new URL(rawAffiliateUrl);
+    if (link.protocol !== "https:" || link.hostname !== "ck.jp.ap.valuecommerce.com" ||
+        link.pathname !== "/servlet/referral" || !link.searchParams.get("sid") ||
+        !link.searchParams.get("pid")) return null;
+    const destination = link.searchParams.get("vc_url");
+    if (!destination) return null;
+    const parsed = new URL(destination);
+    if (parsed.protocol !== "https:" || parsed.hostname !== "store.shopping.yahoo.co.jp") return null;
+    const segments = parsed.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    if (segments.length !== 2 || !segments[1].toLowerCase().endsWith(".html")) return null;
+    const shopId = segments[0];
+    const itemId = segments[1].slice(0, -5);
+    if (shopId.toLowerCase() !== item.shopId.toLowerCase() ||
+        itemId.toLowerCase() !== item.itemId.toLowerCase()) return null;
+    return link.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchVerifiedAffiliateUrl(appId: string, affiliateId: string, item: Candidate): Promise<string> {
+  const endpoint = new URL(SEARCH_API);
+  endpoint.searchParams.set("appid", appId);
+  endpoint.searchParams.set("affiliate_type", "vc");
+  endpoint.searchParams.set("affiliate_id", affiliateId);
+  endpoint.searchParams.set("seller_id", item.shopId);
+  endpoint.searchParams.set("query", item.itemId);
+  endpoint.searchParams.set("results", "50");
+  const response = await fetch(endpoint.toString(), { cache: "no-store", signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error(`Affiliate itemSearch HTTP ${response.status}`);
+  const data = (await response.json()) as AffiliateResponse;
+  const expectedCode = `${item.shopId}_${item.itemId}`.toLowerCase();
+  const hit = (Array.isArray(data.hits) ? data.hits : []).find((h) =>
+    h.code?.toLowerCase() === expectedCode &&
+    (!h.seller?.sellerId || h.seller.sellerId.toLowerCase() === item.shopId.toLowerCase())
+  );
+  const verified = verifiedAffiliateUrl(hit?.url, item);
+  if (!verified) throw new Error("Affiliate URL could not be verified for the selected item");
+  return verified;
+}
+
+async function previewSelectedAffiliateLinks(appId: string, items: Candidate[]) {
+  const affiliateId = vcAffiliateId();
+  const enriched: Array<Candidate & { affiliateUrl: string | null }> = items.map((item) => ({
+    ...item, affiliateUrl: null,
+  }));
+  const failures: Array<{ shopId: string; itemId: string; error: string }> = [];
+  // Limit extra Yahoo! API load to 3 requests at a time.
+  for (let start = 0; start < items.length; start += 3) {
+    const batch = items.slice(start, start + 3);
+    const results = await Promise.allSettled(
+      batch.map((item) => fetchVerifiedAffiliateUrl(appId, affiliateId, item))
+    );
+    results.forEach((result, offset) => {
+      const index = start + offset;
+      if (result.status === "fulfilled") {
+        enriched[index].affiliateUrl = result.value;
+      } else {
+        failures.push({
+          shopId: items[index].shopId,
+          itemId: items[index].itemId,
+          error: result.reason instanceof Error ? result.reason.message : "Verification failed",
+        });
+      }
+    });
+    if (start + batch.length < items.length) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+  }
+  return { enriched, failures, verifiedCount: enriched.filter((item) => item.affiliateUrl !== null).length };
 }
 
 export async function GET(req: NextRequest) {
@@ -571,7 +716,9 @@ export async function GET(req: NextRequest) {
             }
             const existing = unique.get(key);
             if (!existing || (item.trendRank !== undefined && existing.trendRank === undefined)) {
-              unique.set(key, item);
+              unique.set(key, { ...item, description: item.description ?? existing?.description ?? null });
+            } else if (!existing.description && item.description) {
+              existing.description = item.description;
             }
           }
         } catch (error) {
@@ -590,17 +737,29 @@ export async function GET(req: NextRequest) {
         return a.saleEndsAt.localeCompare(b.saleEndsAt);
       });
     const candidates = allCandidates.slice(0, MAX_CANDIDATES);
-    // ランキング優先の並びを維持したまま、既投稿商品を除外して最大15件を選ぶ。
+    // 商品＋セール開始・終了日時が一致する場合のみ重複とする。
+    // セール期間が記録されていない旧Yahoo!投稿は安全のため商品単位で除外。
     // DBが読み取れない場合は「重複なし」とみなさず選定を停止する。
-    const { keys: postedKeys, rowsScanned: existingPostRowsScanned } = await loadExistingYahooProductKeys();
-    const duplicateCandidates = allCandidates.filter((item) => postedKeys.has(`${item.shopId}:${item.itemId}`.toLowerCase()));
-    const eligibleCandidates = allCandidates.filter((item) => !postedKeys.has(`${item.shopId}:${item.itemId}`.toLowerCase()));
+    const {
+      saleKeys: postedSaleKeys,
+      legacyProductKeys,
+      productKeys: postedProductKeys,
+      rowsScanned: existingPostRowsScanned,
+    } = await loadExistingYahooSaleKeys();
+    const isAlreadyPosted = (item: Candidate): boolean => {
+      const productKey = `${item.shopId}:${item.itemId}`.toLowerCase();
+      return legacyProductKeys.has(productKey) ||
+        postedSaleKeys.has(yahooSaleKey(productKey, item.saleStartsAt, item.saleEndsAt));
+    };
+    const duplicateCandidates = allCandidates.filter(isAlreadyPosted);
+    const eligibleCandidates = allCandidates.filter((item) => !isAlreadyPosted(item));
     const selectedCandidates = eligibleCandidates.slice(0, MAX_POSTS_PER_RUN);
     const selectedRankedCount = selectedCandidates.filter((item) => item.trendRank !== undefined).length;
     const selectedFallbackCount = selectedCandidates.length - selectedRankedCount;
+    const affiliatePreview = await previewSelectedAffiliateLinks(appId, selectedCandidates);
 
     return NextResponse.json({
-      ok: errors.length === 0,
+      ok: errors.length === 0 && affiliatePreview.failures.length === 0,
       mode: "preview_only",
       selectionBasis: "ranking_first_item_lookup_plus_category_search_sale_period",
       schedulePlan: { timezone: SCHEDULE_TIMEZONE, localHours: SCHEDULE_HOURS, intervalMinutes: 60, dailyRuns: 15, enabled: false },
@@ -608,13 +767,18 @@ export async function GET(req: NextRequest) {
       selectedCount: selectedCandidates.length,
       selectedRankedCount,
       selectedFallbackCount,
-      existingPostDuplicateCheck: "completed_read_only",
+      existingPostDuplicateCheck: "completed_read_only_sale_period",
       existingPostRowsScanned,
-      existingYahooProductKeys: postedKeys.size,
+      existingYahooProductKeys: postedProductKeys.size,
+      existingYahooSalePeriodKeys: postedSaleKeys.size,
+      existingYahooLegacyProductKeys: legacyProductKeys.size,
       duplicateCandidateCount: duplicateCandidates.length,
       eligibleCandidateCount: eligibleCandidates.length,
       selectionReadyForPosting: false,
-      selectedCandidates,
+      selectedCandidates: affiliatePreview.enriched,
+      affiliateVerifiedCount: affiliatePreview.verifiedCount,
+      affiliateVerificationFailures: affiliatePreview.failures,
+      imageStorage: "external_url_only",
       postedCount: 0,
       elapsedMs: Date.now() - startedAt,
       scannedCount: Object.values(categoryStats).reduce((sum, stat) => sum + stat.scanned, 0),
@@ -646,7 +810,7 @@ export async function GET(req: NextRequest) {
       notes,
       candidates,
       errors,
-      message: "既存Yahoo!投稿との重複を除外し、ランキング優先で最大15件をプレビュー選定しました。投稿・DB保存は行っていません。",
+      message: "商品とセール期間による重複チェックを行い、ランキング優先で最大15件を選定してValueCommerceリンクを検証しました。画像はYahoo!の外部URL参照です。投稿・DB保存は行っていません。",
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return NextResponse.json({ ok: false, mode: "preview_only", postedCount: 0, error: error instanceof Error ? error.message : String(error) }, { status: 503 });
