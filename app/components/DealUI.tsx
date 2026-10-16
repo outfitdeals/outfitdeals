@@ -9,6 +9,7 @@ export function yen(n: number | null | undefined) {
 export function MarketTag({ market }: { market: string }) {
   const isRakuten = market === "楽天市場";
   const isAmazon = market === "Amazon";
+  const isYahoo = market === "Yahoo!ショッピング";
 
   if (isRakuten) {
     return (
@@ -34,10 +35,21 @@ export function MarketTag({ market }: { market: string }) {
     );
   }
 
-  const base =
-    market === "Yahoo!ショッピング"
-      ? { border: "#6c2735", text: "#6c2735", bg: "#f8eff1" }
-      : { border: "#00533f", text: "#00533f", bg: "#e9f2ef" };
+  if (isYahoo) {
+    return (
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center" title="Yahoo!ショッピング">
+        <img
+          src="/yahoo-market.svg"
+          alt="Yahoo!ショッピング"
+          width={16}
+          height={16}
+          className="block h-4 w-4 shrink-0 object-contain"
+        />
+      </span>
+    );
+  }
+
+  const base = { border: "#00533f", text: "#00533f", bg: "#e9f2ef" };
 
   return (
     <span
