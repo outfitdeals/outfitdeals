@@ -13,7 +13,11 @@ const SEARCH_API = "https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSear
 const RANKING_API = "https://shopping.yahooapis.jp/ShoppingWebService/V1/highRatingTrendRanking";
 const RANKING_LIMIT = 100;
 const LOOKUP_API = "https://shopping.yahooapis.jp/ShoppingWebService/V1/json/itemLookup";
-const DIRECT_LOOKUPS_PER_CATEGORY = 10;
+const DIRECT_LOOKUPS_PER_CATEGORY = 100;
+// Preview and publish share one 300-second request. Stop candidate lookup early
+// so that affiliate validation, DB checks, AI and inserts retain time to finish.
+const LOOKUP_BUDGET_MS = 135_000;
+const LOOKUP_BATCH_RESERVE_MS = 14_000;
 // 旧V1の商品詳細APIへの負荷を抑えるため、同時照会は最大2件。
 const DIRECT_LOOKUP_CONCURRENCY = 2;
 const CATEGORY_API = "https://shopping.yahooapis.jp/ShoppingWebService/V1/json/categorySearch";
@@ -594,9 +598,12 @@ export async function GET(req: NextRequest) {
     type LookupStats = { checked: number; saleCandidates: number; errors: number; rejected: Record<RejectionReason, number> };
     const directLookupStats: Record<string, LookupStats> = {};
 
-    // ランキングのみから取得し、商品検索による補完はしない。
-    // カテゴリはランキング照会に使用したYahoo!公式ジャンルIDに対応するものを採用する。
-    // APIの呼び出し制限を考慮し、カテゴリは直列で1.1秒ずつ間隔を空ける。
+    // Retrieve the ranking lists for all categories first. Then inspect their
+    // products in small round-robin batches so no single category monopolizes time.
+    // Never supplement candidates from generic item search or classify by title.
+    const rankingQueues: Partial<Record<DealCategory, Array<{ code: string; rank: number }>>> = {};
+    const rankingPositions: Partial<Record<DealCategory, number>> = {};
+    let stoppedForTime = false;
     for (const category of CATEGORY_KEYS) {
       const categories = ids[category];
       categoryStats[category] = { genres: categories.length, scanned: 0, candidates: 0 };
@@ -616,69 +623,85 @@ export async function GET(req: NextRequest) {
         },
       };
       if (!categories.length) continue;
-
-      // この公式カテゴリのランキング上位を取得し、対象商品だけを直接照会する。
-      // 複数ジャンルは時間ごとに巡回する。
+      if (Date.now() - startedAt >= LOOKUP_BUDGET_MS - LOOKUP_BATCH_RESERVE_MS) {
+        stoppedForTime = true;
+        break;
+      }
       const rankingGenreId = categories[hour % categories.length];
       rankingStats[category].genreId = rankingGenreId;
       try {
         const ranking = await fetchRanking(appId, rankingGenreId);
         rankingStats[category].checked = ranking.checked;
         rankingStats[category].updatedAt = ranking.updatedAt;
-        // 上位の商品を直接照会。旧V1 APIの短時間アクセス制限に配慮し1.1秒間隔。
-        const topRows = [...ranking.rows]
-          .filter((row) => Number.isInteger(Number(row.rank)) && Number(row.rank) > 0)
-          .sort((a, b) => Number(a.rank) - Number(b.rank));
         const selected = new Set<string>();
-        const rankedItems: Array<{ code: string; rank: number }> = [];
-        for (const row of topRows) {
-          if (rankedItems.length >= DIRECT_LOOKUPS_PER_CATEGORY) break;
+        const rows: Array<{ code: string; rank: number }> = [];
+        for (const row of [...ranking.rows].sort((a, b) => Number(a.rank) - Number(b.rank))) {
+          if (rows.length >= DIRECT_LOOKUPS_PER_CATEGORY) break;
+          const rank = Number(row.rank);
+          if (!Number.isInteger(rank) || rank < 1) continue;
           const code = rankingCode(row);
           if (!code || selected.has(code)) continue;
           selected.add(code);
-          rankedItems.push({ code, rank: Number(row.rank) });
+          rows.push({ code, rank });
         }
-        // 2件ずつ照会し、バッチ間は1.1秒待機する。カテゴリーは引き続き直列。
-        for (let i = 0; i < rankedItems.length; i += DIRECT_LOOKUP_CONCURRENCY) {
-          const batch = rankedItems.slice(i, i + DIRECT_LOOKUP_CONCURRENCY);
-          const lookups = await Promise.allSettled(
-            batch.map(({ code }) => lookupRankedItem(appId, code, category, nowSeconds)),
-          );
-          batch.forEach(({ rank }, index) => {
-            directLookupStats[category].checked += 1;
-            categoryStats[category].scanned += 1;
-            const outcome = lookups[index];
-            if (outcome.status === "rejected") {
-              directLookupStats[category].errors += 1;
-              return;
-            }
-            const lookup = outcome.value;
-            if (!lookup.candidate) {
-              directLookupStats[category].rejected[lookup.reason] += 1;
-              return;
-            }
-            const item = lookup.candidate;
-            item.trendRank = rank;
-            item.rankingUpdatedAt = ranking.updatedAt ?? undefined;
-            const key = `${item.shopId}:${item.itemId}`.toLowerCase();
-            const previous = unique.get(key);
-            // 複数のランキングに登場しても、検索や商品名では再分類しない。
-            // より上位のランキング登録を優先し、同順位なら先に取得した公式カテゴリを維持。
-            if (!previous || previous.trendRank === undefined || rank < previous.trendRank) {
-              unique.set(key, item);
-            }
-            directLookupStats[category].saleCandidates += 1;
-            categoryStats[category].candidates += 1;
-          });
-          if (i + DIRECT_LOOKUP_CONCURRENCY < rankedItems.length) {
-            await new Promise((resolve) => setTimeout(resolve, 1100));
-          }
-        }
+        rankingQueues[category] = rows;
+        rankingPositions[category] = 0;
       } catch (error) {
         rankingStats[category].error = error instanceof Error ? error.message : String(error);
       }
       await new Promise((resolve) => setTimeout(resolve, 1100));
+    }
 
+    // Each pass checks two ranked products per category. Repeat up to rank 100
+    // or until the lookup time budget is reached, whichever comes first.
+    while (!stoppedForTime) {
+      let workRemaining = false;
+      for (const category of CATEGORY_KEYS) {
+        const queue = rankingQueues[category];
+        if (!queue) continue;
+        const position = rankingPositions[category] ?? 0;
+        if (position >= queue.length) continue;
+        workRemaining = true;
+        if (Date.now() - startedAt >= LOOKUP_BUDGET_MS - LOOKUP_BATCH_RESERVE_MS) {
+          stoppedForTime = true;
+          break;
+        }
+        const batch = queue.slice(position, position + DIRECT_LOOKUP_CONCURRENCY);
+        rankingPositions[category] = position + batch.length;
+        const lookups = await Promise.allSettled(
+          batch.map(({ code }) => lookupRankedItem(appId, code, category, nowSeconds)),
+        );
+        batch.forEach(({ rank }, index) => {
+          directLookupStats[category].checked += 1;
+          categoryStats[category].scanned += 1;
+          const outcome = lookups[index];
+          if (outcome.status === "rejected") {
+            directLookupStats[category].errors += 1;
+            return;
+          }
+          const lookup = outcome.value;
+          if (!lookup.candidate) {
+            directLookupStats[category].rejected[lookup.reason] += 1;
+            return;
+          }
+          const item = lookup.candidate;
+          item.trendRank = rank;
+          item.rankingUpdatedAt = rankingStats[category].updatedAt ?? undefined;
+          const key = `${item.shopId}:${item.itemId}`.toLowerCase();
+          const previous = unique.get(key);
+          if (!previous || previous.trendRank === undefined || rank < previous.trendRank) {
+            unique.set(key, item);
+          }
+          directLookupStats[category].saleCandidates += 1;
+          categoryStats[category].candidates += 1;
+        });
+        if (Date.now() - startedAt >= LOOKUP_BUDGET_MS - LOOKUP_BATCH_RESERVE_MS) {
+          stoppedForTime = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+      }
+      if (!workRemaining) break;
     }
 
     const rankedCandidateCount = [...unique.values()].filter((item) => item.trendRank !== undefined).length;
@@ -720,6 +743,8 @@ export async function GET(req: NextRequest) {
       selectedCount: selectedCandidates.length,
       selectedRankedCount,
       selectedFallbackCount,
+      stoppedForTime,
+      lookupLimitPerCategory: DIRECT_LOOKUPS_PER_CATEGORY,
       existingPostDuplicateCheck: "completed_read_only_sale_period",
       existingPostRowsScanned,
       existingYahooProductKeys: postedProductKeys.size,

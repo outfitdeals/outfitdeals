@@ -148,7 +148,8 @@ export async function POST(req: NextRequest) {
   let duplicateCount = 0;
   let aiFailureCount = 0;
   let postFailureCount = 0;
-  let stoppedForTime = false;
+  let lookupStoppedForTime = false;
+  let postingStoppedForTime = false;
   let candidateCount = 0;
   const createdDeals: CreatedDeal[] = [];
 
@@ -180,6 +181,7 @@ export async function POST(req: NextRequest) {
         !Array.isArray(preview.selectedCandidates) || preview.selectedCandidates.length > MAX_POSTS) {
       throw new Error("Yahoo!選定/リンク検証に失敗したため投稿を停止しました");
     }
+    lookupStoppedForTime = preview.stoppedForTime === true;
     const items = (preview.selectedCandidates as Candidate[]).slice(0, postLimit);
     candidateCount = items.length;
 
@@ -187,7 +189,7 @@ export async function POST(req: NextRequest) {
       // Do not start a potentially 20-second AI call when the remaining
       // time cannot cover AI + insertion + run-log finalization.
       if (Date.now() - start >= SAFE_EXECUTION_MS - AI_AND_DB_BUDGET_MS) {
-        stoppedForTime = true; break;
+        postingStoppedForTime = true; break;
       }
       try {
         if (!validAffiliate(item)) throw new Error("商品とアフィリエイトURLが一致しません");
@@ -211,7 +213,7 @@ export async function POST(req: NextRequest) {
         try { comment = await generateComment(item); }
         catch (error) { aiFailureCount++; console.error("[yahoo-auto-publish] AI failed", error); continue; }
         if (Date.now() - start >= SAFE_EXECUTION_MS - 5_000 || Date.now() >= saleEnd.getTime()) {
-          stoppedForTime = true; break;
+          postingStoppedForTime = true; break;
         }
         const { data: previous, error: numberError } = await admin.from("deals")
           .select("deal_number").eq("market_code", "yh").eq("shop_id", item.shopId)
@@ -257,6 +259,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const stoppedForTime = lookupStoppedForTime || postingStoppedForTime;
     const status = postFailureCount || aiFailureCount || stoppedForTime ? "partial" : "success";
     const { error: updateError } = await admin.from("cron_job_runs").update({
       finished_at: new Date().toISOString(), status, candidate_count: candidateCount,
@@ -267,7 +270,8 @@ export async function POST(req: NextRequest) {
     }).eq("id", runId);
     if (updateError) console.error("[yahoo-auto-publish] log update failed", updateError);
     return NextResponse.json({ ok: true, mode: "posting", candidateCount, postedCount,
-      duplicateCount, aiFailureCount, postFailureCount, stoppedForTime, createdDeals,
+      duplicateCount, aiFailureCount, postFailureCount, stoppedForTime,
+      lookupStoppedForTime, postingStoppedForTime, createdDeals,
       elapsedMs: Date.now() - start }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
