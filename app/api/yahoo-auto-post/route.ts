@@ -1,5 +1,5 @@
 // app/api/yahoo-auto-post/route.ts
-// Yahoo!ショッピング: カテゴリ別セール期間候補の確認専用。
+// Yahoo!ショッピング: 公式カテゴリ別ランキングからのセール期間候補確認専用。
 // 商品キーワード・通常価格・割引率を使用しない。
 // DB保存、AI生成、アフィリエイトリンク生成、投稿は行わない。
 
@@ -17,11 +17,9 @@ const DIRECT_LOOKUPS_PER_CATEGORY = 10;
 // 旧V1の商品詳細APIへの負荷を抑えるため、同時照会は最大2件。
 const DIRECT_LOOKUP_CONCURRENCY = 2;
 const CATEGORY_API = "https://shopping.yahooapis.jp/ShoppingWebService/V1/json/categorySearch";
-const RESULTS_PER_CATEGORY = 50;
-const PAGES_PER_CATEGORY = 2;
 const MAX_CANDIDATES = 100;
 const MAX_POSTS_PER_RUN = 15;
-// Yahoo!はPCのローカル時刻 06:30〜20:30 の毎時30分を予定。現段階ではスケジューラ未登録。
+// Windowsタスクスケジューラの運用予定時間（実際の有効・無効はタスク側で管理）。
 const SCHEDULE_TIMEZONE = "Windows computer local time";
 const SCHEDULE_HOURS = "06:30-20:30";
 
@@ -274,7 +272,7 @@ async function resolveCategories(appId: string): Promise<{
 
   for (const key of CATEGORY_KEYS) {
     ids[key] = [...new Set(ids[key])];
-    if (!ids[key].length) notes.push(`${key}: Yahoo!カテゴリを自動対応できず、このカテゴリの検索を保留しました。`);
+    if (!ids[key].length) notes.push(`${key}: Yahoo!カテゴリを自動対応できず、このカテゴリのランキング取得を保留しました。`);
   }
   return { ids, notes };
 }
@@ -369,10 +367,6 @@ function validateHit(hit: YahooHit, category: DealCategory, nowSeconds: number):
     },
     reason: null,
   };
-}
-
-function normalize(hit: YahooHit, category: DealCategory, nowSeconds: number): Candidate | null {
-  return validateHit(hit, category, nowSeconds).candidate;
 }
 
 
@@ -494,25 +488,6 @@ function rankingCode(row: RankingRow): string | null {
   return `${key.slice(0, colon)}_${key.slice(colon + 1)}`;
 }
 
-async function fetchCategory(appId: string, category: DealCategory, genreId: number, offset: number, nowSeconds: number) {
-  const url = new URL(SEARCH_API);
-  url.searchParams.set("appid", appId);
-  url.searchParams.set("genre_category_id", String(genreId));
-  url.searchParams.set("results", String(RESULTS_PER_CATEGORY));
-  url.searchParams.set("start", String(offset));
-  url.searchParams.set("in_stock", "true");
-  url.searchParams.set("image_size", "600");
-  // ランキングではないが、レビュー件数の多い順で候補の品質を改善。
-  url.searchParams.set("sort", "-review_count");
-  // query/is_discounted/defaultPrice/discountPercent は使用しない。
-  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(12000) });
-  if (!response.ok) throw new Error(`商品検索API HTTP ${response.status} (genre=${genreId})`);
-  const json = (await response.json()) as { hits?: YahooHit[] };
-  const hits = Array.isArray(json.hits) ? json.hits : [];
-  return { scanned: hits.length, candidates: hits.map((hit) => normalize(hit, category, nowSeconds)).filter((x): x is Candidate => x !== null) };
-}
-
-
 // After ranking/dedup selection, independently verify the affiliate destination
 // for each selected product. Never accept a link belonging to a different item.
 type AffiliateResponse = {
@@ -614,15 +589,14 @@ export async function GET(req: NextRequest) {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const hour = Math.floor(Date.now() / 3_600_000);
     const unique = new Map<string, Candidate>();
-    const errors: Array<{ category: DealCategory; genreId: number; error: string }> = [];
     const categoryStats: Record<string, { genres: number; scanned: number; candidates: number }> = {};
     const rankingStats: Record<string, { genreId: number | null; checked: number; matched: number; updatedAt: string | null; error: string | null }> = {};
-    const rankingMaps: Partial<Record<DealCategory, Map<string, number>>> = {};
     type LookupStats = { checked: number; saleCandidates: number; errors: number; rejected: Record<RejectionReason, number> };
     const directLookupStats: Record<string, LookupStats> = {};
 
-    // 各カテゴリを2ページ分確認する。固定キーワードは使用しない。
-    // APIの呼び出し制限を考慮し、直列で1.1秒ずつ間隔を空ける。
+    // ランキングのみから取得し、商品検索による補完はしない。
+    // カテゴリはランキング照会に使用したYahoo!公式ジャンルIDに対応するものを採用する。
+    // APIの呼び出し制限を考慮し、カテゴリは直列で1.1秒ずつ間隔を空ける。
     for (const category of CATEGORY_KEYS) {
       const categories = ids[category];
       categoryStats[category] = { genres: categories.length, scanned: 0, candidates: 0 };
@@ -643,13 +617,12 @@ export async function GET(req: NextRequest) {
       };
       if (!categories.length) continue;
 
-      // カテゴリのランキング上位を1回取得。検索候補との一致のみ順位を付与。
+      // この公式カテゴリのランキング上位を取得し、対象商品だけを直接照会する。
       // 複数ジャンルは時間ごとに巡回する。
       const rankingGenreId = categories[hour % categories.length];
       rankingStats[category].genreId = rankingGenreId;
       try {
         const ranking = await fetchRanking(appId, rankingGenreId);
-        rankingMaps[category] = ranking.ranks;
         rankingStats[category].checked = ranking.checked;
         rankingStats[category].updatedAt = ranking.updatedAt;
         // 上位の商品を直接照会。旧V1 APIの短時間アクセス制限に配慮し1.1秒間隔。
@@ -673,6 +646,7 @@ export async function GET(req: NextRequest) {
           );
           batch.forEach(({ rank }, index) => {
             directLookupStats[category].checked += 1;
+            categoryStats[category].scanned += 1;
             const outcome = lookups[index];
             if (outcome.status === "rejected") {
               directLookupStats[category].errors += 1;
@@ -687,8 +661,14 @@ export async function GET(req: NextRequest) {
             item.trendRank = rank;
             item.rankingUpdatedAt = ranking.updatedAt ?? undefined;
             const key = `${item.shopId}:${item.itemId}`.toLowerCase();
-            unique.set(key, item);
+            const previous = unique.get(key);
+            // 複数のランキングに登場しても、検索や商品名では再分類しない。
+            // より上位のランキング登録を優先し、同順位なら先に取得した公式カテゴリを維持。
+            if (!previous || previous.trendRank === undefined || rank < previous.trendRank) {
+              unique.set(key, item);
+            }
             directLookupStats[category].saleCandidates += 1;
+            categoryStats[category].candidates += 1;
           });
           if (i + DIRECT_LOOKUP_CONCURRENCY < rankedItems.length) {
             await new Promise((resolve) => setTimeout(resolve, 1100));
@@ -699,33 +679,6 @@ export async function GET(req: NextRequest) {
       }
       await new Promise((resolve) => setTimeout(resolve, 1100));
 
-      for (let page = 0; page < PAGES_PER_CATEGORY; page += 1) {
-        const genreId = categories[(hour + page) % categories.length];
-        const offset = 1 + (Math.floor(hour / Math.max(1, categories.length)) % 8 + (categories.length === 1 ? page : 0)) % 9 * RESULTS_PER_CATEGORY;
-        try {
-          const result = await fetchCategory(appId, category, genreId, offset, nowSeconds);
-          categoryStats[category].scanned += result.scanned;
-          categoryStats[category].candidates += result.candidates.length;
-          for (const item of result.candidates) {
-            const key = `${item.shopId}:${item.itemId}`.toLowerCase();
-            const rank = rankingMaps[category]?.get(key);
-            if (rank !== undefined) {
-              item.trendRank = rank;
-              item.rankingUpdatedAt = rankingStats[category].updatedAt ?? undefined;
-              rankingStats[category].matched += 1;
-            }
-            const existing = unique.get(key);
-            if (!existing || (item.trendRank !== undefined && existing.trendRank === undefined)) {
-              unique.set(key, { ...item, description: item.description ?? existing?.description ?? null });
-            } else if (!existing.description && item.description) {
-              existing.description = item.description;
-            }
-          }
-        } catch (error) {
-          errors.push({ category, genreId, error: error instanceof Error ? error.message : String(error) });
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1100));
-      }
     }
 
     const rankedCandidateCount = [...unique.values()].filter((item) => item.trendRank !== undefined).length;
@@ -755,13 +708,13 @@ export async function GET(req: NextRequest) {
     const eligibleCandidates = allCandidates.filter((item) => !isAlreadyPosted(item));
     const selectedCandidates = eligibleCandidates.slice(0, MAX_POSTS_PER_RUN);
     const selectedRankedCount = selectedCandidates.filter((item) => item.trendRank !== undefined).length;
-    const selectedFallbackCount = selectedCandidates.length - selectedRankedCount;
+    const selectedFallbackCount = 0; // 検索による補完なし
     const affiliatePreview = await previewSelectedAffiliateLinks(appId, selectedCandidates);
 
     return NextResponse.json({
-      ok: errors.length === 0 && affiliatePreview.failures.length === 0,
+      ok: Object.values(rankingStats).every((stat) => !stat.error) && affiliatePreview.failures.length === 0,
       mode: "preview_only",
-      selectionBasis: "ranking_first_item_lookup_plus_category_search_sale_period",
+      selectionBasis: "ranking_only_official_genre_item_lookup_sale_period",
       schedulePlan: { timezone: SCHEDULE_TIMEZONE, localHours: SCHEDULE_HOURS, intervalMinutes: 60, dailyRuns: 15, enabled: false },
       maxPostsPerRun: MAX_POSTS_PER_RUN,
       selectedCount: selectedCandidates.length,
@@ -809,8 +762,8 @@ export async function GET(req: NextRequest) {
       categoryIds: ids,
       notes,
       candidates,
-      errors,
-      message: "商品とセール期間による重複チェックを行い、ランキング優先で最大15件を選定してValueCommerceリンクを検証しました。画像はYahoo!の外部URL参照です。投稿・DB保存は行っていません。",
+      errors: [],
+      message: "商品とセール期間による重複チェックを行い、Yahoo!公式カテゴリのランキング登録商品だけから最大15件を選定してValueCommerceリンクを検証しました。画像はYahoo!の外部URL参照です。投稿・DB保存は行っていません。",
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return NextResponse.json({ ok: false, mode: "preview_only", postedCount: 0, error: error instanceof Error ? error.message : String(error) }, { status: 503 });
