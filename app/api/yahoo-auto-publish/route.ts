@@ -124,6 +124,48 @@ async function generateComment(item: Candidate): Promise<string> {
   return comment;
 }
 
+// Keep diagnostic details in the existing cron_job_runs.error_message column.
+// Do not log affiliate links, credentials or product descriptions.
+function previewFailureReason(preview: any, statusCode: number): string {
+  const messages: string[] = [];
+  if (typeof preview?.error === "string" && preview.error.trim()) {
+    messages.push(`preview: ${preview.error}`);
+  }
+  if (preview?.mode !== "preview_only") messages.push(`mode=${String(preview?.mode ?? "missing")}`);
+  if (preview?.ok !== true) messages.push("preview.ok=false");
+
+  const rankingStats = preview?.rankingStats;
+  if (rankingStats && typeof rankingStats === "object") {
+    for (const [category, stat] of Object.entries(rankingStats) as Array<[string, any]>) {
+      if (typeof stat?.error === "string" && stat.error.trim()) {
+        messages.push(`ranking[${category}]: ${stat.error}`);
+      }
+    }
+  }
+  if (Array.isArray(preview?.errors)) {
+    for (const entry of preview.errors.slice(0, 5)) {
+      if (entry?.error) messages.push(`category[${String(entry.category ?? "unknown")}]: ${String(entry.error)}`);
+    }
+  }
+  if (Array.isArray(preview?.affiliateVerificationFailures)) {
+    for (const entry of preview.affiliateVerificationFailures.slice(0, 5)) {
+      messages.push(`affiliate[${String(entry.shopId ?? "?")}/${String(entry.itemId ?? "?")}]: ${String(entry.error ?? "verification failed")}`);
+    }
+  }
+  if (preview?.affiliateVerifiedCount !== preview?.selectedCount) {
+    messages.push(`affiliateVerified=${String(preview?.affiliateVerifiedCount ?? "missing")}/${String(preview?.selectedCount ?? "missing")}`);
+  }
+  if (!Array.isArray(preview?.selectedCandidates)) messages.push("selectedCandidates missing");
+  else if (preview.selectedCandidates.length > MAX_POSTS) messages.push("selectedCandidates exceeds limit");
+
+  const details = messages.join("; ") || "unknown preview or affiliate validation failure";
+  // Strip URLs and secret-bearing tokens from diagnostic strings before persistence.
+  const safeDetails = details
+    .replace(/https?:\/\/[^\s;]+/gi, "[URL]")
+    .replace(/(?:sid|pid|appid|api_key|authorization|bearer|token|secret)\s*[:=]\s*[^\s;,]+/gi, "[REDACTED]");
+  return `Yahoo!選定/リンク検証失敗 (HTTP ${statusCode}): ${safeDetails}`.slice(0, 1800);
+}
+
 export async function POST(req: NextRequest) {
   if (!authorized(req)) return fail("Unauthorized", 401);
   if (process.env.YAHOO_POSTING_ENABLED !== "true") {
@@ -179,7 +221,7 @@ export async function POST(req: NextRequest) {
     if (!previewResponse.ok || !preview.ok || preview.mode !== "preview_only" ||
         preview.affiliateVerifiedCount !== preview.selectedCount ||
         !Array.isArray(preview.selectedCandidates) || preview.selectedCandidates.length > MAX_POSTS) {
-      throw new Error("Yahoo!選定/リンク検証に失敗したため投稿を停止しました");
+      throw new Error(previewFailureReason(preview, previewResponse.status));
     }
     lookupStoppedForTime = preview.stoppedForTime === true;
     const items = (preview.selectedCandidates as Candidate[]).slice(0, postLimit);
