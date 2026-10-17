@@ -227,7 +227,7 @@ export async function POST(req: NextRequest) {
             item_id: item.itemId, shop_name: item.shopName || null,
             source_url: item.itemUrl, deal_url: item.affiliateUrl, image_url: item.imageUrl,
             comment, item_description: item.description?.trim().slice(0, 2000) || null, category: item.category, brand: null,
-            free_shipping: item.freeShipping, expires_at: saleEnd.toISOString(),
+            free_shipping: item.freeShipping === true, expires_at: saleEnd.toISOString(),
             source_sale_started_at: saleStart.toISOString(), source_sale_ends_at: saleEnd.toISOString(),
             deal_number: dealNumber, likes_count: 0, comments_count: 0,
           }).select("id, public_id").single();
