@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -117,13 +117,17 @@ export default function AdminDealsPage() {
   const [hideReasonDetails, setHideReasonDetails] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState("");
+  const requestSequence = useRef(0);
+  const searchInitialized = useRef(false);
 
   const loadDeals = async (
     page = currentPage,
     activeFilter: Filter = filter,
     activeSortKey: SortKey = sortKey,
-    activeSortDirection: SortDirection = sortDirection
+    activeSortDirection: SortDirection = sortDirection,
+    activeSearch: string = searchText
   ) => {
+    const requestId = ++requestSequence.current;
     setLoading(true);
     setErrorMessage("");
 
@@ -153,6 +157,46 @@ export default function AdminDealsPage() {
       dealsQuery = dealsQuery.eq("moderation_status", "hidden");
     }
 
+    // Search the database BEFORE pagination. The previous implementation only
+    // searched the 100 rows already loaded into the browser.
+    const keyword = activeSearch.trim();
+    if (keyword) {
+      // PostgREST .or() uses commas and parentheses as syntax; avoid injecting
+      // them into the filter expression. Japanese and ordinary text are kept.
+      const safeKeyword = keyword.replace(/[(),.\"\\]/g, " ").trim();
+      if (safeKeyword) {
+        const clauses = [
+          `title.ilike.%${safeKeyword}%`,
+          `shop_id.ilike.%${safeKeyword}%`,
+          `item_id.ilike.%${safeKeyword}%`,
+        ];
+        if (/^[0-9]+$/.test(keyword)) {
+          clauses.push(`public_id.eq.${keyword}`);
+        }
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(keyword)) {
+          clauses.push(`id.eq.${keyword}`);
+        }
+        // Include matches from the username field in profiles.
+        const { data: matchingProfiles, error: matchingProfilesError } = await supabase
+          .from("profiles")
+          .select("id")
+          .ilike("username", `%${safeKeyword}%`)
+          .limit(1000);
+        if (requestId !== requestSequence.current) return;
+        if (matchingProfilesError) {
+          console.error("Admin deal username search error:", matchingProfilesError);
+          setErrorMessage("投稿者名の検索に失敗しました。");
+          setLoading(false);
+          return;
+        }
+        const matchingUserIds = (matchingProfiles ?? []).map((profile) => profile.id);
+        if (matchingUserIds.length) {
+          clauses.push(`user_id.in.(${matchingUserIds.join(",")})`);
+        }
+        dealsQuery = dealsQuery.or(clauses.join(","));
+      }
+    }
+
     const [
       { data: dealRows, error: dealsError, count: filteredCount },
       { count: allTotal, error: totalCountError },
@@ -177,6 +221,8 @@ export default function AdminDealsPage() {
         .select("id", { count: "exact", head: true })
         .eq("moderation_status", "hidden"),
     ]);
+
+    if (requestId !== requestSequence.current) return;
 
     if (dealsError) {
       console.error("Admin deals load error:", dealsError);
@@ -226,6 +272,7 @@ export default function AdminDealsPage() {
         .select("id, username")
         .in("id", userIds);
 
+      if (requestId !== requestSequence.current) return;
       if (profilesError) {
         console.error("Admin deal profiles load error:", profilesError);
         setErrorMessage(
@@ -256,38 +303,21 @@ export default function AdminDealsPage() {
     void loadDeals(1);
   }, []);
 
-  const filteredDeals = useMemo(() => {
-    const keyword = searchText.trim().toLocaleLowerCase("ja-JP");
+  // Debounce typing to avoid triggering a database request for every keystroke.
+  useEffect(() => {
+    if (!searchInitialized.current) {
+      searchInitialized.current = true;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setCurrentPage(1);
+      void loadDeals(1, filter, sortKey, sortDirection, searchText);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchText]);
 
-    return deals.filter((deal) => {
-      if (
-        filter === "expired" &&
-        !(deal.moderation_status === "visible" && deal.is_expired)
-      ) {
-        return false;
-      }
-      if (
-        filter === "visible" &&
-        !(deal.moderation_status === "visible" && !deal.is_expired)
-      ) {
-        return false;
-      }
-      if (filter === "hidden" && deal.moderation_status !== "hidden") {
-        return false;
-      }
-
-      if (!keyword) return true;
-
-      return [
-        deal.title ?? "",
-        deal.username ?? "",
-        deal.id,
-        deal.public_id?.toString() ?? "",
-        deal.shop_id ?? "",
-        deal.item_id ?? "",
-      ].some((value) => value.toLocaleLowerCase("ja-JP").includes(keyword));
-    });
-  }, [deals, filter, searchText]);
+  // All displayed rows already satisfy the server-side search and status filter.
+  const filteredDeals = deals;
 
   const totalPages = Math.max(1, Math.ceil(filteredTotalCount / PAGE_SIZE));
 
