@@ -38,6 +38,35 @@ type PendingPostDraft = {
 const PENDING_POST_DRAFT_KEY = "tokumikke_pending_post_draft_v1";
 const POST_LOGIN_RETURN_PARAM = "restorePostDraft";
 
+// Yahoo!の商品説明に含まれるHTMLを、表示・保存用のプレーンテキストに整形する。
+// 楽天・Amazonの商品説明には適用しない。
+function cleanYahooItemDescription(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const entities: Record<string, string> = {
+    amp: "&", lt: "<", gt: ">", quot: '\"', apos: "'", nbsp: " ",
+  };
+  return value
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\s*\/(?:p|div|li|tr|h[1-6])\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
+      if (entity.startsWith("#")) {
+        const hex = /^#x/i.test(entity);
+        const code = parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff &&
+          !(code >= 0xd800 && code <= 0xdfff)
+          ? String.fromCodePoint(code)
+          : match;
+      }
+      return entities[entity.toLowerCase()] ?? match;
+    })
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function normalizeText(value: string) {
   return value.toLowerCase().replace(/\s+/g, "");
 }
@@ -955,8 +984,11 @@ function PostPageContent() {
           recoverDirectRakutenUrl(data.source_url) ||
           recoverDirectRakutenUrl(data.deal_url) ||
           recoverDirectAmazonUrl(data.source_url) ||
-          recoverDirectAmazonUrl(data.deal_url);
-        const loadedMarket: Market = data.market === "Amazon" || normalizeAmazonProductUrl(loadedSourceUrl) ? "Amazon" : "楽天市場";
+          recoverDirectAmazonUrl(data.deal_url) ||
+          normalizeYahooProductUrl(data.source_url ?? "");
+        const loadedMarket: Market = data.market === "Amazon" || normalizeAmazonProductUrl(loadedSourceUrl)
+          ? "Amazon" : normalizeYahooProductUrl(loadedSourceUrl) || data.market === "Yahoo!ショッピング"
+            ? "Yahoo!ショッピング" : "楽天市場";
 
         setProductUrl(loadedSourceUrl);
         setMarket(loadedMarket);
@@ -1182,7 +1214,7 @@ function PostPageContent() {
     setManualMode(false);
     setDealUrl("");
     try {
-      const response = await fetch("/api/yahoo-preview", {
+      const response = await fetch("/api/yahoo-manual-preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: normalizedUrl }),
@@ -1195,19 +1227,17 @@ function PostPageContent() {
       setPrice(Number(data.price) > 0 ? String(data.price) : "");
       setOrigPrice("");
       setShopName(String(data.shopName ?? ""));
+      if (!data.affiliateUrl) throw new Error("Yahoo!のアフィリエイトURLを検証できませんでした。");
+      setDealUrl(String(data.affiliateUrl));
       setImageUrl(String(data.imageUrl ?? ""));
-      setItemDescription(String(data.itemDescription ?? ""));
-      setCategory(inferCategoryFromRakuten({
-        title: String(data.title ?? ""),
-        itemDescription: String(data.itemDescription ?? ""),
-        shopName: String(data.shopName ?? ""),
-        url: normalizedUrl,
-      }));
+      setItemDescription(cleanYahooItemDescription(data.itemDescription));
+      // Yahoo!公式ジャンル階層から分類。商品名による推測を行わない。
+      setCategory((data.category as DealCategory) || "other");
       setFreeShipping(data.freeShipping === true);
       const endTime = String(data.endTime ?? "");
       const matchedEnd = endTime.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/);
       setExpiresAt(matchedEnd ? `${matchedEnd[1]}/${matchedEnd[2]}/${matchedEnd[3]} ${matchedEnd[4]}:${matchedEnd[5]}` : "");
-      setApiError("Yahoo!の商品情報を取得しました。アフィリエイト提携完了までYahoo!商品の投稿はできません。");
+      setApiError(null);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Yahoo!の商品情報を取得できませんでした。");
     } finally {
@@ -1469,13 +1499,8 @@ function PostPageContent() {
       focusInvalidField("deal-product-url");
       return;
     }
-    if (isDirectYahooProductUrl(productUrl)) {
-      setApiError("Yahoo!ショッピングの商品投稿はアフィリエイト提携の完了後に利用できます。現在は商品情報の取得テストのみ可能です。");
-      focusInvalidField("deal-product-url");
-      return;
-    }
-    if (!isDirectRakutenProductUrl(productUrl) && !isDirectAmazonProductUrl(productUrl)) {
-      setApiError("楽天の商品ページURLを入力してください。");
+    if (!isDirectRakutenProductUrl(productUrl) && !isDirectAmazonProductUrl(productUrl) && !isDirectYahooProductUrl(productUrl)) {
+      setApiError("楽天市場またはYahoo!ショッピングの商品ページURLを入力してください。");
       focusInvalidField("deal-product-url");
       return;
     }
@@ -1520,8 +1545,16 @@ function PostPageContent() {
       }
 
       const isAmazonDeal = isDirectAmazonProductUrl(productUrl);
-      const trimmedProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(productUrl) : normalizeRakutenProductUrl(productUrl) || productUrl.trim();
-      const routeIdentifiers = isAmazonDeal ? getAmazonRouteIdentifiers(trimmedProductUrl) : getRakutenRouteIdentifiers(trimmedProductUrl);
+      const isYahooDeal = isDirectYahooProductUrl(productUrl);
+      const trimmedProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(productUrl)
+        : isYahooDeal ? normalizeYahooProductUrl(productUrl)
+        : normalizeRakutenProductUrl(productUrl) || productUrl.trim();
+      const routeIdentifiers = isAmazonDeal ? getAmazonRouteIdentifiers(trimmedProductUrl)
+        : isYahooDeal ? (() => {
+            const parts = new URL(trimmedProductUrl).pathname.split("/").filter(Boolean);
+            return { marketCode: "yh" as const, shopId: parts[0], itemId: parts[1].slice(0, -5) };
+          })()
+        : getRakutenRouteIdentifiers(trimmedProductUrl);
 
       if (!routeIdentifiers) {
         setApiError("商品識別情報を取得できませんでした。商品ページURLをご確認ください。");
@@ -1558,13 +1591,16 @@ function PostPageContent() {
           return;
         }
 
-        const normalizedCurrentProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(trimmedProductUrl) : normalizeRakutenProductUrl(trimmedProductUrl);
+        const normalizedCurrentProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(trimmedProductUrl)
+          : isYahooDeal ? normalizeYahooProductUrl(trimmedProductUrl) : normalizeRakutenProductUrl(trimmedProductUrl);
 
         const duplicateDeal = (sameExpiryDeals ?? []).find((deal) => {
           const existingProductUrl = isAmazonDeal
             ? recoverDirectAmazonUrl(deal.source_url) || recoverDirectAmazonUrl(deal.deal_url)
+            : isYahooDeal ? normalizeYahooProductUrl(deal.source_url ?? "")
             : recoverDirectRakutenUrl(deal.source_url) || recoverDirectRakutenUrl(deal.deal_url);
-          const normalizedExistingProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(existingProductUrl) : normalizeRakutenProductUrl(existingProductUrl);
+          const normalizedExistingProductUrl = isAmazonDeal ? normalizeAmazonProductUrl(existingProductUrl)
+            : isYahooDeal ? normalizeYahooProductUrl(existingProductUrl) : normalizeRakutenProductUrl(existingProductUrl);
           return existingProductUrl && normalizedExistingProductUrl === normalizedCurrentProductUrl;
         });
 
@@ -1603,7 +1639,22 @@ function PostPageContent() {
       // 新規投稿・編集を問わず、保存時には必ず トクミッケ の
       // 楽天アフィリエイトURLを再生成する。
       // これにより、過去データで deal_url が通常の商品URLだった場合も修正される。
-      const shouldCreateRakutenAffiliateUrl = !isAmazonDeal;
+      const shouldCreateRakutenAffiliateUrl = !isAmazonDeal && !isYahooDeal;
+
+      if (isYahooDeal) {
+        // 商品登録直前にValueCommerceリンクと元の商品IDをサーバー側で再照合する。
+        // 照合に失敗したら通常リンクのまま保存しない。
+        const response = await fetch("/api/yahoo-manual-preview", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: trimmedProductUrl }),
+        });
+        const data = await response.json();
+        if (!response.ok || typeof data?.affiliateUrl !== "string" || !data.affiliateUrl) {
+          setApiError(typeof data?.error === "string" ? data.error : "Yahoo!のアフィリエイト検証に失敗しました。");
+          return;
+        }
+        finalDealUrl = data.affiliateUrl;
+      }
 
       if (shouldCreateRakutenAffiliateUrl) {
         try {
@@ -1653,7 +1704,7 @@ function PostPageContent() {
         title,
         price: price ? Number(price) : null,
         orig_price: origPrice ? Number(origPrice) : null,
-        market: isAmazonDeal ? "Amazon" : market || null,
+        market: isAmazonDeal ? "Amazon" : isYahooDeal ? "Yahoo!ショッピング" : market || null,
         market_code: routeIdentifiers.marketCode,
         shop_id: routeIdentifiers.shopId,
         item_id: routeIdentifiers.itemId,
@@ -1929,7 +1980,7 @@ function PostPageContent() {
 
             {!isEditMode && (
               <p className="mt-1.5 text-xs leading-5 text-slate-500">
-                楽天市場は投稿可能です。Yahoo!ショッピングは商品情報の取得テストのみ可能で、提携完了後に投稿対応予定です。
+                楽天市場・Yahoo!ショッピングの商品を投稿できます。Yahoo!は商品確認時と保存時にValueCommerceリンクを検証します。
               </p>
             )}
 
@@ -2262,7 +2313,7 @@ function PostPageContent() {
               {isEditMode
                 ? "現在保存されているトクミッケのアフィリエイトリンクです。更新時に再生成されます。"
                 : market === "Yahoo!ショッピング"
-                  ? "Yahoo!のアフィリエイト連携は審査待ちです。商品情報の取得テストのみ可能です。"
+                  ? "Yahoo!公式商品APIで同一商品とValueCommerceリンクを検証します。"
                   : market === "Amazon"
                   ? "投稿時にアフィリエイトリンクへ自動変換されます。"
                   : "楽天から自動入力した時点でトクミッケのアフィリエイトURLを生成し、投稿時にも再生成して保存します。"}
@@ -2317,15 +2368,10 @@ function PostPageContent() {
               </button>
             ) : null}
 
-            {isYahooUrl && !isEditMode ? (
-              <p className="mb-2 text-sm text-amber-700">
-                Yahoo!ショッピングはアフィリエイト提携審査中のため、商品情報の確認のみ利用できます。投稿はまだできません。
-              </p>
-            ) : null}
 
             <button
               type="submit"
-              disabled={isLoading || isEditLoading || isRakutenAutoFilling || isYahooAutoFilling || isYahooUrl || (!isEditMode && isDirectAmazonProductUrl(productUrl))}
+              disabled={isLoading || isEditLoading || isRakutenAutoFilling || isYahooAutoFilling || (!isEditMode && isDirectAmazonProductUrl(productUrl))}
               className="inline-flex h-12 w-full items-center justify-center rounded-md bg-[#001e43] px-5 text-[15px] font-semibold text-white hover:bg-[#002b66] cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 sm:h-auto sm:w-auto sm:rounded sm:py-2 sm:text-sm"
             >
               {isLoading
