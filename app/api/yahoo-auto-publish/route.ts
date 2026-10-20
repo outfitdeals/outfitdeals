@@ -226,6 +226,7 @@ export async function POST(req: NextRequest) {
     lookupStoppedForTime = preview.stoppedForTime === true;
     const items = (preview.selectedCandidates as Candidate[]).slice(0, postLimit);
     candidateCount = items.length;
+    const selectionDiagnostics = preview.selectionDiagnostics ?? null;
 
     for (const item of items) {
       // Do not start a potentially 20-second AI call when the remaining
@@ -308,12 +309,16 @@ export async function POST(req: NextRequest) {
       posted_count: postedCount, duplicate_count: duplicateCount,
       ai_failure_count: aiFailureCount, post_failure_count: postFailureCount,
       stopped_for_time: stoppedForTime, elapsed_ms: Date.now() - start,
-      created_deals: createdDeals, error_message: null,
+      created_deals: createdDeals,
+      error_message: candidateCount === 0 && selectionDiagnostics
+        ? `候補0件の診断: ${JSON.stringify(selectionDiagnostics)}`.slice(0, 1800)
+        : null,
     }).eq("id", runId);
     if (updateError) console.error("[yahoo-auto-publish] log update failed", updateError);
     return NextResponse.json({ ok: true, mode: "posting", candidateCount, postedCount,
       duplicateCount, aiFailureCount, postFailureCount, stoppedForTime,
       lookupStoppedForTime, postingStoppedForTime, createdDeals,
+      selectionDiagnostics,
       elapsedMs: Date.now() - start }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

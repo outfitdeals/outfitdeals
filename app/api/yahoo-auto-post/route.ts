@@ -19,7 +19,7 @@ const DIRECT_LOOKUPS_PER_CATEGORY = 100;
 const LOOKUP_BUDGET_MS = 135_000;
 const LOOKUP_BATCH_RESERVE_MS = 14_000;
 // 旧V1の商品詳細APIへの負荷を抑えるため、同時照会は最大2件。
-const DIRECT_LOOKUP_CONCURRENCY = 2;
+const DIRECT_LOOKUP_CONCURRENCY = 3; // 1カテゴリ3件ずつ照会。API負荷と速度を両立。
 const CATEGORY_API = "https://shopping.yahooapis.jp/ShoppingWebService/V1/json/categorySearch";
 const MAX_CANDIDATES = 100;
 const MAX_POSTS_PER_RUN = 15;
@@ -699,7 +699,8 @@ export async function GET(req: NextRequest) {
           stoppedForTime = true;
           break;
         }
-        await new Promise((resolve) => setTimeout(resolve, 1100));
+        // ランキング商品照会は逐次1.1秒待機を短縮。ただしカテゴリAPIの待機は維持。
+        await new Promise((resolve) => setTimeout(resolve, 350));
       }
       if (!workRemaining) break;
     }
@@ -734,6 +735,35 @@ export async function GET(req: NextRequest) {
     const selectedFallbackCount = 0; // 検索による補完なし
     const affiliatePreview = await previewSelectedAffiliateLinks(appId, selectedCandidates);
 
+    // 0件の原因を特定するため、取得・除外・照合の各段階の件数を返す。
+    // 価格適用期間（priceLabel）は販売期間ではないため名称を区別する。
+    const rejectionTotals = Object.values(directLookupStats).reduce(
+      (totals, stats) => {
+        for (const key of Object.keys(stats.rejected) as RejectionReason[]) {
+          totals[key] += stats.rejected[key];
+        }
+        return totals;
+      },
+      {
+        missing_item_data: 0, missing_sale_period: 0, invalid_sale_period: 0,
+        outside_sale_period: 0, invalid_price_or_title: 0, invalid_item_url: 0,
+        invalid_item_code: 0, invalid_image: 0, other_validation: 0,
+      } as Record<RejectionReason, number>,
+    );
+    const selectionDiagnostics = {
+      meaningOfPeriod: "priceLabel sale-price period (not product selling period)",
+      rankedProductsChecked: Object.values(directLookupStats).reduce((n, s) => n + s.checked, 0),
+      lookupErrors: Object.values(directLookupStats).reduce((n, s) => n + s.errors, 0),
+      rejectionTotals,
+      validPeriodCandidates: unique.size,
+      alreadyPostedCandidates: duplicateCandidates.length,
+      eligibleCandidates: eligibleCandidates.length,
+      selectedCandidates: selectedCandidates.length,
+      affiliateVerified: affiliatePreview.verifiedCount,
+      affiliateFailures: affiliatePreview.failures.length,
+      lookupStoppedForTime: stoppedForTime,
+    };
+
     return NextResponse.json({
       ok: Object.values(rankingStats).every((stat) => !stat.error) && affiliatePreview.failures.length === 0,
       mode: "preview_only",
@@ -754,6 +784,7 @@ export async function GET(req: NextRequest) {
       eligibleCandidateCount: eligibleCandidates.length,
       selectionReadyForPosting: false,
       selectedCandidates: affiliatePreview.enriched,
+      selectionDiagnostics,
       affiliateVerifiedCount: affiliatePreview.verifiedCount,
       affiliateVerificationFailures: affiliatePreview.failures,
       imageStorage: "external_url_only",
