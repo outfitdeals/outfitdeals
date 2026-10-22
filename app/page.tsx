@@ -1251,10 +1251,12 @@ function PageContent() {
     : "all";
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>(categoryFromUrl);
 
-  // Keep category tabs in sync when navigating from a deal's "全て見る" link.
+  // Keep category tabs in sync with URL navigation (including browser Back/Forward).
   useEffect(() => {
     setActiveCategory(categoryFromUrl);
   }, [categoryFromUrl]);
+
+
 
   const [currentUser, setCurrentUser] = useState<any | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -1297,6 +1299,25 @@ function PageContent() {
     }
   }, [urlTopDealsPage]);
   const [topDealsBatch, setTopDealsBatch] = useState(1);
+
+  // Persist category selection in the URL before moving to a different page.
+  // Without this, returning to page 1 loses the selected category.
+  const handleCategoryChange = useCallback((category: CategoryFilter) => {
+    setActiveCategory(category);
+    setCurrentPage(0);
+    setTopDealsPage(1);
+    setTopDealsBatch(1);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("page");
+    if (category === "all") params.delete("category");
+    else params.set("category", category);
+    const query = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`
+    );
+  }, []);
   const [likingId, setLikingId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [searchSort, setSearchSort] = useState<"relevance" | "newest" | "oldest">("relevance");
@@ -1913,11 +1934,22 @@ function PageContent() {
     []
   );
 
+  const mainDealsRequestIdRef = useRef(0);
+
   const loadMainDeals = useCallback(
     async (userId: string | null) => {
-      const { data: dealsData, error: dealsError } = await supabase
-        .from("deals")
-        .select(`
+      // カテゴリ切替中に古い通信結果で画面を上書きしない。
+      const requestId = ++mainDealsRequestIdRef.current;
+      const PAGE_SIZE = 1000;
+      const dealsData: any[] = [];
+      let dealsError: { message: string } | null = null;
+
+      // 先にDBでカテゴリを絞り込む。最新1000件からの後段フィルタは行わない。
+      // Supabaseの1回あたり最大行数にも対応するため、全ページを順次取得。
+      for (let from = 0; ; from += PAGE_SIZE) {
+        let query = supabase
+          .from("deals")
+          .select(`
           id,
           public_id,
           shop_id,
@@ -1940,11 +1972,29 @@ function PageContent() {
           free_shipping,
           expires_at
         `)
-        .eq("moderation_status", "visible")
-        .eq("is_expired", false)
-        .order("created_at", { ascending: false })
-        .limit(1000);
+          .eq("moderation_status", "visible")
+          .eq("is_expired", false);
 
+        if (activeCategory !== "all") {
+          query = query.eq("category", activeCategory);
+        }
+
+        const result = await query
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (requestId !== mainDealsRequestIdRef.current) return;
+        if (result.error) {
+          dealsError = result.error;
+          break;
+        }
+        const page = result.data ?? [];
+        dealsData.push(...page);
+        if (page.length < PAGE_SIZE) break;
+      }
+
+      if (requestId !== mainDealsRequestIdRef.current) return;
       if (dealsError) {
         console.error("loadMainDeals error:", dealsError);
         setTopDeals([]);
@@ -1995,17 +2045,20 @@ function PageContent() {
       // まずDeal本体だけでカードを即表示する。
       // プロフィール・いいね等の補助情報を待たせない。
       const initialSorted = sortRows(baseRows);
+      if (requestId !== mainDealsRequestIdRef.current) return;
       setTopDeals(initialSorted);
 
       // 投稿者情報は第2段階で反映。
       const withAuthors = await attachAuthorUsername(baseRows);
+      if (requestId !== mainDealsRequestIdRef.current) return;
       setTopDeals(sortRows(withAuthors));
 
       // いいね・低評価・保存・コメント済み等は最後に反映。
       const withFlags = await attachInteractionFlags(withAuthors, userId);
+      if (requestId !== mainDealsRequestIdRef.current) return;
       setTopDeals(sortRows(withFlags));
     },
-    [attachAuthorUsername, attachInteractionFlags]
+    [activeCategory, attachAuthorUsername, attachInteractionFlags]
   );
 
   // 「あなたにおすすめ」はカテゴリごとにDBから候補を選ぶ。
@@ -2509,7 +2562,7 @@ function PageContent() {
       const now = Date.now();
       const MIN_REFRESH_INTERVAL_MS = 60_000;
 
-      if (refreshInFlightRef.current) return;
+      if (refreshInFlightRef.current && !force) return;
 
       if (
         !force &&
@@ -3983,7 +4036,7 @@ function PageContent() {
 
             <CategoryTabs
               active={activeCategory}
-              onChange={setActiveCategory}
+              onChange={handleCategoryChange}
               compact
             />
 
@@ -4098,7 +4151,7 @@ function PageContent() {
             <div className="mt-4 flex justify-end px-4">
               <div className="flex items-center gap-3">
                 <a
-                  href={`/?page=${Math.max(1, topDealsPage - 1)}`}
+                  href={`/?page=${Math.max(1, topDealsPage - 1)}${activeCategory !== "all" ? `&category=${activeCategory}` : ""}`}
                   className={
                     !hasPrevTopDealsPage
                       ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
@@ -4109,7 +4162,7 @@ function PageContent() {
                 </a>
 
                 <a
-                  href={`/?page=${topDealsPage + 1}`}
+                  href={`/?page=${topDealsPage + 1}${activeCategory !== "all" ? `&category=${activeCategory}` : ""}`}
                   className={
                     !hasNextTopDealsPage
                       ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
@@ -4130,7 +4183,7 @@ function PageContent() {
               <section className="min-w-0 flex-none" style={{ width: rowCardsWidth }}>
                 <CategoryTabs
                   active={activeCategory}
-                  onChange={setActiveCategory}
+                  onChange={handleCategoryChange}
                 />
 
                 <div className="mb-3 flex items-center justify-between">
@@ -4327,7 +4380,7 @@ function PageContent() {
                   <div className="mt-6 flex justify-end">
                     <div className="flex items-center gap-3">
                       <a
-                        href={`/?page=${Math.max(1, topDealsPage - 1)}`}
+                        href={`/?page=${Math.max(1, topDealsPage - 1)}${activeCategory !== "all" ? `&category=${activeCategory}` : ""}`}
                         className={
                           !hasPrevTopDealsPage
                             ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
@@ -4338,7 +4391,7 @@ function PageContent() {
                       </a>
 
                       <a
-                        href={`/?page=${topDealsPage + 1}`}
+                        href={`/?page=${topDealsPage + 1}${activeCategory !== "all" ? `&category=${activeCategory}` : ""}`}
                         className={
                           !hasNextTopDealsPage
                             ? "pointer-events-none inline-flex cursor-default items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-4 py-1.5 text-sm text-slate-400"
