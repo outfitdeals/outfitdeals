@@ -9,6 +9,8 @@ import RightSidebar, { type SidebarDeal } from "@/app/components/RightSidebar";
 import MobileSpotlightDeals from "./deals/[slug]/MobileSpotlightDeals";
 import { MarketTag, yen } from "@/app/components/DealUI";
 import { likeDeal, saveDeal } from "@/lib/dealActions";
+import Card from "@/app/components/DealCard";
+import MobileDealRow from "@/app/components/MobileDealRow";
 
 type DealsRow = {
   id: string;
@@ -204,224 +206,6 @@ function getTopDealScore(row: DealsRow) {
   return likes * 5 + comments * 4 + freshnessBoost;
 }
 
-type CardProps = {
-  d: any;
-  onLike?: () => void;
-  canLike?: boolean;
-  isLiked?: boolean;
-  onSave?: () => void;
-  canSave?: boolean;
-  isSaved?: boolean;
-};
-
-function Card({
-  d,
-  onLike,
-  canLike = false,
-  isLiked = false,
-  onSave,
-  canSave = false,
-  isSaved = false,
-}: CardProps) {
-  const imageSrc: string =
-    d.imageUrl ?? d.image ?? "https://via.placeholder.com/600x600?text=No+Image";
-
-  const imageBlock = (
-    <div className="w-full overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <div className="aspect-square w-full overflow-hidden">
-        <img
-          src={imageSrc}
-          alt=""
-          className="block h-full w-full object-cover"
-          loading="lazy"
-          decoding="async"
-        />
-      </div>
-    </div>
-  );
-
-  const imageWrapper = d.detailUrl ? (
-    <Link href={d.detailUrl} className="block cursor-pointer">
-      {imageBlock}
-    </Link>
-  ) : d.linkUrl ? (
-    <a
-      href={d.linkUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block cursor-pointer"
-    >
-      {imageBlock}
-    </a>
-  ) : (
-    imageBlock
-  );
-
-  const likeCount = Number(d.likes ?? 0);
-  const likeDisabled = !canLike;
-  const saveDisabled = !canSave;
-  const categoryLabel = getCategoryLabel(d.category);
-
-  return (
-    <article className="flex h-full flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_8px_18px_-10px_rgba(15,23,42,0.28)] transition hover:shadow-[0_12px_24px_-10px_rgba(15,23,42,0.34)]">
-      <div className="px-3 pt-3 text-[11.5px] leading-[1.35] text-slate-500">
-        <div className="flex items-center gap-2">
-          {d.userId ? (
-            <Link
-              href={`/users/${d.userId}`}
-              className="block cursor-pointer"
-              aria-label={`${d.user}のプロフィールを見る`}
-            >
-              <img
-                src={d.avatar}
-                alt=""
-                referrerPolicy="no-referrer"
-                className="h-6 w-6 rounded-full object-cover"
-              />
-            </Link>
-          ) : (
-            <img
-              src={d.avatar}
-              alt=""
-              referrerPolicy="no-referrer"
-              className="h-6 w-6 rounded-full object-cover"
-            />
-          )}
-          <div>
-            <div className="text-slate-600">
-              投稿者{" "}
-              {d.userId ? (
-                <Link
-                  href={`/users/${d.userId}`}
-                  className="inline-block max-w-[86px] truncate align-bottom cursor-pointer font-medium text-slate-700 hover:text-[#006888] hover:underline"
-                  title={d.user}
-                >
-                  {d.user}
-                </Link>
-              ) : (
-                <span
-                  className="inline-block max-w-[86px] truncate align-bottom font-medium text-slate-700"
-                  title={d.user}
-                >
-                  {d.user}
-                </span>
-              )}
-            </div>
-            <div>{d.time}</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="px-3 pt-3">{imageWrapper}</div>
-
-      <div className="px-3 pb-3 pt-2">
-        {categoryLabel ? (
-          <div className="mb-1">
-            <span className="inline-block rounded bg-slate-100 px-2 py-[2px] text-[10px] font-semibold text-slate-600">
-              {categoryLabel}
-            </span>
-          </div>
-        ) : null}
-
-        <h3 className="line-clamp-3 text-[14px] font-semibold leading-snug text-slate-900">
-          {d.detailUrl ? (
-            <Link href={d.detailUrl} className="cursor-pointer hover:underline">
-              {d.title}
-            </Link>
-          ) : (
-            d.title
-          )}
-        </h3>
-
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <div className="text-[18px] font-bold text-[#d70035]">
-            {yen(d.price)}
-          </div>
-          {d.orig ? (
-            <div className="text-sm text-slate-400 line-through">
-              {yen(d.orig)}
-            </div>
-          ) : null}
-          {d.isNew ? <NewBadge /> : null}
-        </div>
-
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="min-w-0 truncate text-xs text-slate-600">
-            {d.shopName}
-          </div>
-          <div className="flex-shrink-0">
-            <MarketTag market={d.market} />
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-auto border-t border-slate-200 px-3 py-2 text-slate-500">
-        <div className="flex items-center gap-4 text-xs">
-          <button
-            type="button"
-            onClick={onLike}
-            disabled={likeDisabled}
-            className={
-              isLiked
-                ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
-                : !canLike
-                  ? "inline-flex items-center gap-1 cursor-default text-slate-400"
-                  : "inline-flex items-center gap-1 cursor-pointer hover:text-slate-700"
-            }
-            aria-label="いいね"
-            title={
-              !canLike
-                ? "いいねするにはログインが必要です"
-                : isLiked
-                  ? "いいね済み"
-                  : "いいね"
-            }
-          >
-            <ThumbsUp
-              className="h-4 w-4"
-              fill={isLiked ? "currentColor" : "none"}
-            />
-            {likeCount}
-          </button>
-
-          <Link
-            href={`${d.detailUrl}#comments`}
-            className={
-              d.hasCommented
-                ? "inline-flex cursor-pointer items-center gap-1 text-[#001e43] hover:text-[#001e43]"
-                : "inline-flex cursor-pointer items-center gap-1 hover:text-slate-700"
-            }
-            title={d.hasCommented ? "コメント済み" : "コメントを見る"}
-            aria-label="コメントを見る"
-          >
-            <MessageSquare
-              className="h-4 w-4"
-              fill={d.hasCommented ? "currentColor" : "none"}
-            />
-            {Number(d.comments ?? 0)}
-          </Link>
-
-          <button
-            type="button"
-            onClick={onSave}
-            className="ml-auto inline-flex cursor-pointer items-center text-slate-500 hover:text-slate-700"
-            aria-label="シェア"
-            title="シェア"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              className="h-4 w-4 fill-current"
-            >
-              <path d="M21.55 9.17 14.83 3.5a.75.75 0 0 0-1.23.57v3.06C7.5 7.63 3.25 10.72 2.1 16.8a.75.75 0 0 0 1.28.65c2.52-2.7 5.57-4.12 10.22-4.22v3.2a.75.75 0 0 0 1.23.57l6.72-5.67a1.4 1.4 0 0 0 0-2.16Z" />
-            </svg>
-          </button>
-        </div>
-      </div>
-    </article>
-  );
-}
-
 type MobileRecommendCardProps = {
   d: any;
   onLike?: () => void;
@@ -526,109 +310,6 @@ function MobileRecommendCard({
     </article>
   );
 }
-
-type MobileDealRowProps = {
-  d: any;
-  onLike?: () => void;
-  canLike?: boolean;
-  isLiked?: boolean;
-};
-
-function MobileDealRow({
-  d,
-  onLike,
-  canLike = false,
-  isLiked = false,
-}: MobileDealRowProps) {
-  const imageSrc: string =
-    d.imageUrl ?? d.image ?? "https://via.placeholder.com/160x160?text=No+Image";
-
-  const likeCount = Number(d.likes ?? 0);
-  const likeDisabled = !canLike;
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 shadow-[0_5px_14px_-8px_rgba(15,23,42,0.38)]">
-      <div className="flex items-start gap-3">
-        <Link
-          href={d.detailUrl}
-          className="h-[84px] w-[84px] flex-none self-center overflow-hidden rounded-md bg-slate-100"
-        >
-          <img
-            src={imageSrc}
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            decoding="async"
-          />
-        </Link>
-
-        <div className="min-w-0 flex-1">
-
-          <h3 className="line-clamp-2 text-[13px] font-semibold leading-[1.2] text-slate-800">
-            <Link href={d.detailUrl} className="cursor-pointer hover:underline">
-              {d.title}
-            </Link>
-          </h3>
-
-          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
-            <span className="text-[17px] font-bold leading-none text-[#d70035]">
-              {yen(d.price)}
-            </span>
-            {d.orig ? (
-              <span className="text-[11px] text-slate-400 line-through">
-                {yen(d.orig)}
-              </span>
-            ) : null}
-            {d.isNew ? <NewBadge compact /> : null}
-          </div>
-
-          <div className="mt-1 truncate text-[11px] text-slate-400">
-            {d.shopName}
-          </div>
-
-          <div className="mt-1 flex items-center gap-4 text-[11px] text-slate-500">
-            <button
-              type="button"
-              onClick={onLike}
-              disabled={likeDisabled}
-              className={
-                isLiked
-                  ? "inline-flex cursor-pointer items-center gap-1 text-[#006888]"
-                  : !canLike
-                    ? "inline-flex items-center gap-1 text-slate-400"
-                    : "inline-flex items-center gap-1 hover:text-slate-700"
-              }
-              aria-label="いいね"
-            >
-              <ThumbsUp
-                className="h-3.5 w-3.5"
-                fill={isLiked ? "currentColor" : "none"}
-              />
-              {likeCount}
-            </button>
-
-            <Link
-              href={`${d.detailUrl}#comments`}
-              className={
-                d.hasCommented
-                  ? "inline-flex cursor-pointer items-center gap-1 text-[#001e43] hover:text-[#001e43]"
-                  : "inline-flex cursor-pointer items-center gap-1 hover:text-slate-700"
-              }
-              title={d.hasCommented ? "コメント済み" : "コメントを見る"}
-              aria-label="コメントを見る"
-            >
-              <MessageSquare
-                className="h-3.5 w-3.5"
-                fill={d.hasCommented ? "currentColor" : "none"}
-              />
-              {Number(d.comments ?? 0)}
-            </Link>
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
 
 type SearchDealRowProps = {
   row: DealsRow;
@@ -1285,7 +966,16 @@ function PageContent() {
   useEffect(() => {
     const page = Math.max(1, Number.parseInt(urlTopDealsPage ?? "1", 10) || 1);
     setTopDealsPage(page);
-    setTopDealsBatch(1);
+    // Do not collapse batches while restoring a previous browsing position.
+    let returningBatch = 1;
+    try {
+      const saved = JSON.parse(window.sessionStorage.getItem("tokumikke:home-return") || "null");
+      if (saved?.route === window.location.pathname + window.location.search &&
+          Date.now() - saved.savedAt < 20 * 60_000) {
+        returningBatch = Math.max(1, Number(saved.batch) || 1);
+      }
+    } catch { /* Ignore unavailable or malformed session storage. */ }
+    setTopDealsBatch(returningBatch);
 
     // Header/footer logos navigate from /?page=N to /.
     // Reset scroll only on that transition, after Next.js updates the route.
@@ -3296,7 +2986,15 @@ function PageContent() {
   const hasPrevTopDealsPage = topDealsPage > 1;
 
   useEffect(() => {
-    setTopDealsBatch(1);
+    let returningBatch = 1;
+    try {
+      const saved = JSON.parse(window.sessionStorage.getItem("tokumikke:home-return") || "null");
+      if (saved?.route === window.location.pathname + window.location.search &&
+          Date.now() - saved.savedAt < 20 * 60_000) {
+        returningBatch = Math.max(1, Number(saved.batch) || 1);
+      }
+    } catch { /* Ignore unavailable or malformed session storage. */ }
+    setTopDealsBatch(returningBatch);
   }, [topDealsPage, isMobileMode, cardsPerPage]);
 
   useEffect(() => {
@@ -3314,6 +3012,79 @@ function PageContent() {
     observer.observe(target);
     return () => observer.disconnect();
   }, [hasMoreTopDealsWithinPage, topDealsPage, isMobileMode, cardsPerPage]);
+
+  // Keep the list position when opening a deal and returning with browser Back.
+  // Save the visible batch too: otherwise a long list collapses to its first batch.
+  useEffect(() => {
+    const rememberBeforeDealNavigation = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const link = target.closest("a[href]") as HTMLAnchorElement | null;
+      if (!link || !link.pathname.startsWith("/deals/")) return;
+      try {
+        window.sessionStorage.setItem("tokumikke:home-return", JSON.stringify({
+          route: window.location.pathname + window.location.search,
+          scrollY: window.scrollY,
+          batch: topDealsBatch,
+          savedAt: Date.now(),
+        }));
+      } catch { /* Storage may be disabled; normal navigation still works. */ }
+    };
+    document.addEventListener("click", rememberBeforeDealNavigation, true);
+    return () => document.removeEventListener("click", rememberBeforeDealNavigation, true);
+  }, [topDealsBatch]);
+
+  // Re-run on Back navigation as well as on a fresh mount: Next.js may keep
+  // the homepage mounted while the product detail route is displayed.
+  useEffect(() => {
+    let interval: number | null = null;
+    let framesAtTarget = 0;
+    let attempts = 0;
+    const stop = () => {
+      if (interval !== null) window.clearInterval(interval);
+      interval = null;
+    };
+    const resume = () => {
+      stop();
+      let saved: { route: string; scrollY: number; batch: number; savedAt: number } | null = null;
+      try {
+        const stored = window.sessionStorage.getItem("tokumikke:home-return");
+        if (stored) saved = JSON.parse(stored);
+      } catch { return; }
+      if (!saved || saved.route !== window.location.pathname + window.location.search ||
+          Date.now() - saved.savedAt > 20 * 60_000 || !Number.isFinite(saved.scrollY)) return;
+
+      const target = saved.scrollY;
+      const batch = Math.max(1, Number(saved.batch) || 1);
+      setTopDealsBatch(current => Math.max(current, batch));
+      attempts = 0;
+      framesAtTarget = 0;
+      interval = window.setInterval(() => {
+        attempts++;
+        // Wait until the restored batch has produced enough page height.
+        if (document.documentElement.scrollHeight >= target + window.innerHeight - 24) {
+          window.scrollTo({ top: target, behavior: "auto" });
+          if (Math.abs(window.scrollY - target) <= 12) framesAtTarget++;
+          else framesAtTarget = 0;
+          // Keep restoring briefly while the router and images settle.
+          if (framesAtTarget >= 8) {
+            stop();
+            try { window.sessionStorage.removeItem("tokumikke:home-return"); } catch {}
+          }
+        }
+        if (attempts >= 150) stop();
+      }, 100);
+    };
+    resume();
+    const handleReturn = () => window.setTimeout(resume, 0);
+    window.addEventListener("popstate", handleReturn);
+    window.addEventListener("pageshow", handleReturn);
+    return () => {
+      stop();
+      window.removeEventListener("popstate", handleReturn);
+      window.removeEventListener("pageshow", handleReturn);
+    };
+  }, [topDealsBatch, topDealsFiltered.length, isMobileMode]);
 
   const toSideVM = (r: DealsRow): SidebarDeal => ({
     id: r.id,
