@@ -109,6 +109,17 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   ];
 
+  // 常設カテゴリページを検索エンジンへ通知（既存のカテゴリIDと統一）。
+  const categoryIds = [
+    "fashion_women", "fashion_men", "food", "beauty", "home",
+    "interior", "electronics", "sports", "shoes", "other",
+  ] as const;
+  const categoryPages: MetadataRoute.Sitemap = categoryIds.map((slug) => ({
+    url: `${SITE_URL}/category/${slug}`,
+    changeFrequency: "daily",
+    priority: 0.7,
+  }));
+
   const deals = await loadVisibleDeals();
 
   const dealPages: MetadataRoute.Sitemap = deals.flatMap((deal) => {
@@ -127,5 +138,5 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ];
   });
 
-  return [...staticPages, ...dealPages];
+  return [...staticPages, ...categoryPages, ...dealPages];
 }

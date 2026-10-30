@@ -2,6 +2,8 @@
 // SEO向けカテゴリ一覧。既存のトップページや投稿処理は変更しません。
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
+import { RefreshCw } from "lucide-react";
 import { notFound } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import CategoryDealCard from "@/app/components/CategoryDealCard";
@@ -124,12 +126,46 @@ async function getCategoryDeals(category: CategoryId, page: number): Promise<{ d
   return { deals: (data ?? []) as Deal[], count: count ?? 0, error: false };
 }
 
+// レディースカテゴリの新着商品の掲載日時（ページ番号に依存しない）
+async function getLatestWomenDealPostedAt(): Promise<string | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  const client = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+  const { data, error } = await client.from("deals")
+    .select("created_at")
+    .eq("moderation_status", "visible")
+    .eq("is_expired", false)
+    .eq("category", "fashion_women")
+    .not("public_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error("women category latest deal query failed:", error);
+    return null;
+  }
+  return data?.created_at ?? null;
+}
+
+function formatTokyoPostedAt(value: string): string {
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo", year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(value));
+}
+
 export default async function CategoryPage({ params, searchParams }: PageProps) {
   const { slug } = await params;
   if (!isCategoryId(slug)) notFound();
   const page = safePage((await searchParams).page);
   const category = CATEGORIES[slug];
   const { deals, count, error } = await getCategoryDeals(slug, page);
+  const latestWomenPostedAt = slug === "fashion_women"
+    ? (page === 1 ? deals[0]?.created_at ?? null : await getLatestWomenDealPostedAt())
+    : null;
   const authorIds = [...new Set(deals.map((d) => d.user_id).filter((id): id is string => !!id))];
   const profileMap: Record<string, { username: string | null; avatar_url: string | null; avatar_updated_at: string | null }> = {};
   if (authorIds.length) {
@@ -147,25 +183,47 @@ export default async function CategoryPage({ params, searchParams }: PageProps) 
   if (!error && page > 1 && (page > totalPages || count === 0)) notFound();
 
   return (
-    <div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
-      <nav aria-label="パンくずリスト" className="mb-4 text-xs text-slate-500">
+    <div className="mx-auto w-full max-w-[1440px] px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
+      <nav aria-label="パンくずリスト" className="mb-3 text-xs text-slate-500 sm:mb-4">
         <Link href="/" className="cursor-pointer hover:underline">トップ</Link>
         <span aria-hidden="true" className="px-2">/</span>
         <span>{category.label}</span>
       </nav>
 
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">{category.title}</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">{category.description}</p>
+      <header className="mb-4 sm:mb-6">
+        <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-3xl">{category.title}</h1>
+        {latestWomenPostedAt && (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-600 sm:text-sm">
+            <RefreshCw aria-hidden="true" stroke="#168a4a" className="h-3.5 w-3.5 shrink-0" />
+            <span>新着商品の最終掲載：</span>
+            <time dateTime={latestWomenPostedAt}>{formatTokyoPostedAt(latestWomenPostedAt)}</time>
+          </p>
+        )}
+        {slug === "fashion_women" && (
+          <div className="mt-3 overflow-hidden rounded-lg sm:mt-4">
+            <Image
+              src="/category-banners/fashion-women.png"
+              alt="レディースファッションのお得情報。現在開催中のセール情報、売れ筋商品をまとめてチェック！"
+              width={2170}
+              height={725}
+              sizes="(max-width: 640px) 100vw, (max-width: 1440px) 95vw, 1376px"
+              className="block h-auto w-full"
+              priority
+            />
+          </div>
+        )}
+        <p className="mt-2 max-w-3xl text-[13px] leading-5 text-slate-600 sm:mt-3 sm:text-sm sm:leading-7">{category.description}</p>
       </header>
 
-      <nav aria-label="商品カテゴリ" className="mb-6 flex flex-wrap gap-2">
+      <nav aria-label="商品カテゴリ" className="-mx-4 mb-4 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mx-0 sm:mb-6 sm:overflow-visible sm:px-0">
+        <div className="flex w-max gap-2 sm:w-auto sm:flex-wrap">
         {(Object.keys(CATEGORIES) as CategoryId[]).map((id) => (
           <Link key={id} href={pageUrl(id, 1)} aria-current={id === slug ? "page" : undefined}
-            className={`inline-flex cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${id === slug ? "border-[#006888] bg-[#006888] text-white" : "border-slate-300 bg-white text-slate-700 hover:border-[#006888] hover:text-[#006888]"}`}>
+            className={`inline-flex shrink-0 cursor-pointer whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold transition sm:text-sm ${id === slug ? "border-[#006888] bg-[#006888] text-white" : "border-slate-300 bg-white text-slate-700 hover:border-[#006888] hover:text-[#006888]"}`}>
             {CATEGORIES[id].label}
           </Link>
         ))}
+        </div>
       </nav>
 
       {error ? (
